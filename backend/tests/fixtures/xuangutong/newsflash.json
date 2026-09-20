@@ -1,0 +1,107 @@
+{
+  "_comment": "选股通 baoer-api /api/v6/message/newsflash 实测响应。created_at 为秒级时间戳，impact 为整数级别；关联证券在 stocks[].symbol（源无 stock_symbols 字段）；subj_ids 为分类 id 列表；summary 常为空串（保持空串而非拒绝记录）。",
+  "code": 20000,
+  "data": {
+    "messages": [
+      {
+        "id": 1292832,
+        "title": "商务部新闻发言人就中美经贸磋商有关问题答记者问",
+        "summary": "商务部新闻发言人就中美经贸磋商有关问题答记者问。\n\n答：经中美双方商定，中共中央政治局委员、国务院副总理何立峰将于9月19日—23日率团赴美国与美方举行经贸磋商。（央视）",
+        "image": "",
+        "subscribe_type": 0,
+        "is_premium": false,
+        "impact": 2,
+        "subj_ids": [
+          457,
+          9,
+          10
+        ],
+        "stocks": [],
+        "bkj_infos": [
+          {
+            "id": 2469022,
+            "name": "外贸受益概念"
+          }
+        ],
+        "created_at": 1789780292,
+        "manual_updated_at": 1789780292,
+        "flash_message_type": "default",
+        "all_stocks": [],
+        "route": "https://xuangubao.com.cn/article/1292832?fromSubjectId=457"
+      },
+      {
+        "id": 1292793,
+        "title": "锐捷网络：拟发行可转债募资不超过26亿元，用于面向大规模智算集群的高速互联网络系统研发及产业化项目",
+        "summary": "",
+        "image": "",
+        "subscribe_type": 0,
+        "is_premium": false,
+        "impact": 0,
+        "subj_ids": [
+          723,
+          9,
+          1891,
+          762,
+          10
+        ],
+        "stocks": [
+          {
+            "name": "锐捷网络",
+            "symbol": "301165.SZ",
+            "market": ""
+          }
+        ],
+        "bkj_infos": [
+          {
+            "id": 44666049,
+            "name": "东数西算/算力"
+          }
+        ],
+        "created_at": 1789735099,
+        "manual_updated_at": 1789735099,
+        "flash_message_type": "default",
+        "all_stocks": [
+          {
+            "name": "锐捷网络",
+            "symbol": "301165.SZ",
+            "market": "mdc"
+          }
+        ],
+        "route": "https://xuangubao.com.cn/article/1292793?fromSubjectId=723"
+      },
+      {
+        "id": 1292750,
+        "title": "华瓷股份：公司陶瓷基板产品已小批量供货，主要应用于功率半导体封装",
+        "summary": "华瓷股份在互动平台表示，公司陶瓷基板产品已实现小批量供货。",
+        "image": "",
+        "subscribe_type": 0,
+        "is_premium": false,
+        "impact": 1,
+        "subj_ids": [
+          723,
+          9
+        ],
+        "stocks": [
+          {
+            "name": "华瓷股份",
+            "symbol": "001216.SZ",
+            "market": ""
+          }
+        ],
+        "bkj_infos": [],
+        "created_at": 1789708810,
+        "manual_updated_at": 1789708810,
+        "flash_message_type": "default",
+        "all_stocks": [
+          {
+            "name": "华瓷股份",
+            "symbol": "001216.SZ",
+            "market": "astock"
+          }
+        ],
+        "route": "https://xuangubao.com.cn/article/1292750?fromSubjectId=723"
+      }
+    ],
+    "next_cursor": 1292750
+  }
+}

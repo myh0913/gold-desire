@@ -1,0 +1,205 @@
+# =============================================================================
+# gold-desire 单机部署编排（Linux 服务器 + Docker Compose v2）
+#
+# 服务矩阵：
+#   postgres  PostgreSQL 16（唯一权威存储，数据卷 pg_data）
+#   redis     Redis 7（两级缓存的跨进程层 + 限流 + HITL 令牌，AOF 持久化）
+#   api       FastAPI 服务侧（只读库 + 缓存；启动时先跑 alembic 迁移再起 uvicorn）
+#   worker    采集/调度侧（python -m app.ingest.scheduler，与 api 同镜像）
+#   nginx     对外唯一入口（80/443）：托管前端静态产物 + 反代 /api 与 /ws
+#   migrate   一次性迁移服务（profile=tools，升级脚本显式调用）
+#
+# 迁移策略（入口式）：api 容器 command 为
+#   `sh -c "alembic upgrade head && exec uvicorn ..."`——
+# 每次启动先补齐 schema 再监听端口，配合 healthcheck 保证「就绪 = 已迁移」；
+# upgrade.sh 另用 `docker compose run --rm api alembic upgrade head` 做升级前显式迁移。
+#
+# 使用约定（scripts/*.sh 已封装，手工执行请保持一致）：
+#   cd gold-desire
+#   docker compose --project-name gold-desire --env-file .env \
+#     -f deploy/docker-compose.yml up -d
+# 相对路径（env_file ../.env、./nginx.conf、../frontend/dist）均相对 deploy/
+# （首个 compose 文件所在目录）解析；在 deploy/ 下裸跑 `docker compose up -d`
+# 亦同口径（但 .env 插值需手工 --env-file ../.env 指定）。
+# =============================================================================
+
+name: gold-desire
+
+services:
+  # ------------------------------------------------------------------ PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: gold-desire-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gold}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gold-desire-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-gold_desire}
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gold} -d ${POSTGRES_DB:-gold_desire}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+          cpus: "2.0"
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  # ---------------------------------------------------------------------- Redis
+  redis:
+    image: redis:7-alpine
+    container_name: gold-desire-redis
+    restart: unless-stopped
+    # noeviction：限流令牌 / HITL 确认令牌不允许被 LRU 淘汰；容量由 maxmemory 封顶
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "384mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # ------------------------------------------------------------------------ API
+  api:
+    build:
+      context: ../backend
+    image: gold-desire-backend:latest
+    container_name: gold-desire-api
+    restart: unless-stopped
+    # 全量应用配置（APP_*/DB_*/REDIS_URL/JWT_SECRET/AGENT_*/上游密钥/CORS/限流）
+    # 经根目录 .env 注入；pydantic Settings 从进程环境读取，extra=ignore。
+    env_file:
+      - ../.env
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+    # 迁移策略：启动即 alembic upgrade head，成功后才 exec uvicorn（信号直达 uvicorn）
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${SERVER_PORT:-8000} --workers ${SERVER_WORKERS:-1}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8000" # 仅容器网络内可见，对外一律走 nginx
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:${SERVER_PORT:-8000}/health', timeout=4).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "10" }
+
+  # -------------------------------------------------------------------- Worker
+  worker:
+    image: gold-desire-backend:latest
+    container_name: gold-desire-worker
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+    command: ["python", "-m", "app.ingest.scheduler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # 不依赖 api：采集侧与服务侧解耦，api 重启不影响采集窗口
+    stop_grace_period: 30s # 给盘后任务留优雅收尾时间
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "10" }
+
+  # --------------------------------------------------------------------- Nginx
+  # 默认（build-in-image）：镜像内已烘焙 frontend/dist（见 frontend/Dockerfile），
+  # nginx.conf 由 deploy/ 挂载覆盖；宿主机构建路径见 compose.host-build.yml。
+  nginx:
+    build:
+      context: ../frontend
+    image: gold-desire-frontend:latest
+    container_name: gold-desire-nginx
+    restart: unless-stopped
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      # 启用 HTTPS 前先在 deploy/nginx.conf 打开 443 server 块并挂载证书（见 docs/deploy-ops.md）
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      # 覆盖镜像自带的 default.conf（避免其成为 :80 默认站点抢占请求）
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 启用 HTTPS 时取消注释（证书放 deploy/certs/，勿入库）：
+      # - ./certs/fullchain.pem:/etc/nginx/certs/fullchain.pem:ro
+      # - ./certs/privkey.pem:/etc/nginx/certs/privkey.pem:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # 容器内固定监听 80（NGINX_HTTP_PORT 只是宿主机侧映射，探针勿用）
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # ------------------------------------------------------------------- Migrate
+  # 一次性迁移服务：`docker compose --profile tools run --rm migrate`
+  # （upgrade.sh 用等价的 `run --rm api alembic upgrade head`，二者留其一即可）
+  migrate:
+    image: gold-desire-backend:latest
+    container_name: gold-desire-migrate
+    profiles: ["tools"]
+    restart: "no"
+    env_file:
+      - ../.env
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+    name: gold-desire_pg_data
+  redis_data:
+    name: gold-desire_redis_data

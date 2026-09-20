@@ -1,0 +1,95 @@
+{
+  "_comment": "同花顺 /api/a-share/special-data/limit-up-ladder 实测响应。data.item[] 每天一项（date + boards 六个分组），每分组为该连板高度的个股数组。",
+  "code": 0,
+  "message": "success",
+  "request_id": "7c9a1b2d3e4f5a6b7c8d9e0f1a2b3c4d",
+  "data": {
+    "timestamp": 1789660800000,
+    "window": {"start": "2026-09-17", "end": "2026-09-18"},
+    "item": [
+      {
+        "date": "2026-09-17",
+        "boards": {
+          "two_board": [
+            {
+              "thscode": "600448.SH",
+              "ticker": "600448",
+              "name": "华纺股份",
+              "board_num": 2,
+              "seal_nextday": null,
+              "sign_level": 0
+            },
+            {
+              "thscode": "002453.SZ",
+              "ticker": "002453",
+              "name": "华软科技",
+              "board_num": 2,
+              "seal_nextday": null,
+              "sign_level": 0
+            }
+          ],
+          "three_board": [
+            {
+              "thscode": "600272.SH",
+              "ticker": "600272",
+              "name": "开开实业",
+              "board_num": 3,
+              "seal_nextday": true,
+              "sign_level": 0
+            }
+          ],
+          "four_board": [],
+          "five_board": [],
+          "six_board": [],
+          "seven_over": []
+        }
+      },
+      {
+        "date": "2026-09-18",
+        "boards": {
+          "two_board": [
+            {
+              "thscode": "603758.SH",
+              "ticker": "603758",
+              "name": "秦安股份",
+              "board_num": 2,
+              "seal_nextday": true,
+              "sign_level": 0
+            },
+            {
+              "thscode": "600664.SH",
+              "ticker": "600664",
+              "name": "哈药股份",
+              "board_num": 2,
+              "seal_nextday": true,
+              "sign_level": 0
+            }
+          ],
+          "three_board": [
+            {
+              "thscode": "600272.SH",
+              "ticker": "600272",
+              "name": "开开实业",
+              "board_num": 3,
+              "seal_nextday": true,
+              "sign_level": 0
+            }
+          ],
+          "four_board": [
+            {
+              "thscode": "600721.SH",
+              "ticker": "600721",
+              "name": "百花医药",
+              "board_num": 4,
+              "seal_nextday": true,
+              "sign_level": 0
+            }
+          ],
+          "five_board": [],
+          "six_board": [],
+          "seven_over": []
+        }
+      }
+    ]
+  }
+}

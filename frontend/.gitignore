@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+dist/
+dist-ssr/
+
+# 环境
+.env
+.env.local
+.env.*.local
+
+# 缓存与构建信息
+.vite/
+*.tsbuildinfo
+.eslintcache
+
+# 日志与系统
+*.log
+.DS_Store

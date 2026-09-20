@@ -1,0 +1,44 @@
+# 示例：一份完整的 YAML 字段映射（新增源 = 丢一个 YAML 文件，无需改代码）。
+#
+# 路径语法：点号分层 "a.b.c"；列表索引 "data.items[0].symbol"。
+# transform 见 app/datasources/mappings/transforms.py：
+#   identity / to_str / to_int / to_float / to_bool
+#   pct_to_ratio / ratio_passthrough / lots_to_shares / yuan_from_wan / yuan_from_yi
+#   ms_to_datetime / ms_to_date / str_to_date / hhmm_from_ms / hhmm_from_str
+#   strip_suffix / normalize_code / list_of_str / "constant:字面量"
+#
+# default 省略 = 缺失即拒绝该记录（REQUIRED）；显式写 default: null = 缺失填 None。
+source_id: demo_http
+capability: daily_bars
+record_path: data.items
+notes: 示例 HTTP 源的日线映射（仅演示格式，未注册 provider）
+static:
+  currency: CNY
+fields:
+  - target: code
+    source: symbol
+    transform: normalize_code
+  - target: trade_date
+    source: date_ms
+    transform: ms_to_date
+  - target: open
+    source: o
+    transform: to_float
+  - target: high
+    source: h
+    transform: to_float
+  - target: low
+    source: l
+    transform: to_float
+  - target: close
+    source: c
+    transform: to_float
+  - target: pre_close
+    source: pc
+    transform: to_float
+  - target: volume_shares
+    source: vol
+    transform: lots_to_shares
+  - target: amount_yuan
+    source: amount
+    transform: yuan_from_wan

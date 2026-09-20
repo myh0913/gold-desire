@@ -1,0 +1,14 @@
+{
+  "_comment": "同花顺 /api/a-share/calendar/trading-days 实测响应：data.item[] 仅含交易日（date 为 YYYYMMDD），故 is_open 语义上恒为 True。",
+  "code": 0,
+  "message": "success",
+  "request_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+  "data": {
+    "timestamp": 1789660800000,
+    "item": [
+      {"date_ms": 1758211200000, "date": "20250919"},
+      {"date_ms": 1758470400000, "date": "20250922"},
+      {"date_ms": 1758556800000, "date": "20250923"}
+    ]
+  }
+}

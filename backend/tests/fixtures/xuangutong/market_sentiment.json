@@ -1,0 +1,35 @@
+{
+  "_comment": "选股通 /api/market_indicator/line 实测响应：data 为当日分钟点列表（243 条），映射取最后一个收盘点。timestamp 为秒级；limit_up_broken_ratio / yesterday_limit_up_avg_pcp 已是小数；lianbangaodu 为 {连板数: 家数}。",
+  "code": 20000,
+  "message": "OK",
+  "data": [
+    {
+      "fall_count": 895,
+      "lianbangaodu": {"1": 2, "2": 3, "3": 1, "4": 1},
+      "limit_down_count": 1,
+      "limit_up_broken_count": 0,
+      "limit_up_broken_ratio": 0,
+      "limit_up_count": 7,
+      "market_temperature": 71.26803863842646,
+      "rise_count": 3667,
+      "stay_count": 596,
+      "timestamp": 1789694700,
+      "yesterday_limit_up_avg_pcp": 0.017890785410204082,
+      "ziranzhangting_count": 0
+    },
+    {
+      "fall_count": 1109,
+      "lianbangaodu": {"1": 67, "2": 8, "3": 2, "4": 2},
+      "limit_down_count": 1,
+      "limit_up_broken_count": 26,
+      "limit_up_broken_ratio": 0.24761904761904763,
+      "limit_up_count": 79,
+      "market_temperature": 69.61658753439677,
+      "rise_count": 3937,
+      "stay_count": 163,
+      "timestamp": 1789714800,
+      "yesterday_limit_up_avg_pcp": 0.025003532704081635,
+      "ziranzhangting_count": 50
+    }
+  ]
+}

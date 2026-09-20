@@ -1,0 +1,29 @@
+{
+  "_comment": "选股通 flash-api /api/surge_stock/plates 实测响应（2026-09-18）。data.items 数组顺序即排名，rank 由序号派生；该源不返回核心股涨幅/数量，core_avg_pct/core_count 留空。",
+  "code": 20000,
+  "data": {
+    "items": [
+      {
+        "id": 17864537,
+        "name": "次新股",
+        "description": "龙头盘中大涨近300%"
+      },
+      {
+        "id": 31765737,
+        "name": "国产芯片",
+        "description": "英伟达预计2027年芯片销量将达到当前年度水平的约两倍"
+      },
+      {
+        "id": 26346142,
+        "name": "机器人",
+        "description": "特斯拉开启新一轮针对旗下机器人业务的量产审厂工作"
+      },
+      {
+        "id": -1,
+        "name": "其他"
+      }
+    ],
+    "manual_updated_at": 1789714500,
+    "timestamp": 1789714800
+  }
+}

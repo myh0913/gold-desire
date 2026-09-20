@@ -1,0 +1,471 @@
+"""行情类仓储（``std_*`` 语义）：股票、日线、分时、涨停池、快照、情绪、快讯、主题、监管、天梯。
+
+一个聚合一个仓储，均继承 :class:`~app.repositories.base.BaseRepository`，对外暴露
+类型化查询方法，供服务层与读 API（Task 12）调用。所有批量写入统一走
+:meth:`BaseRepository.bulk_upsert`，保证采集重跑的幂等性。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from datetime import date
+from typing import Any
+
+from sqlalchemy import func, or_, select
+
+from app.models.market import (
+    DailyBar,
+    LadderRow,
+    LimitUpPool,
+    MarketSentiment,
+    MinuteBar,
+    MonitorStock,
+    NewsFlash,
+    PoolSnapshot,
+    Stock,
+    Theme,
+    ThemeStock,
+)
+from app.repositories.base import BaseRepository
+
+# 各表的幂等键与覆盖列（集中声明，便于审阅与复用）。
+_DAILY_BAR_CONFLICT = ("code", "trade_date")
+_DAILY_BAR_UPDATE = (
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "volume_shares",
+    "amount_yuan",
+    "source",
+)
+_MINUTE_BAR_CONFLICT = ("code", "trade_date", "minute_index")
+_MINUTE_BAR_UPDATE = ("time_label", "price", "volume_lots", "amount_yuan", "source")
+_LIMIT_UP_CONFLICT = ("trade_date", "pool_type", "code")
+_LIMIT_UP_UPDATE = (
+    "name",
+    "continue_days",
+    "limit_up_time",
+    "seal_amount_yuan",
+    "open_times",
+    "turnover_rate",
+    "amount_yuan",
+    "market_cap_yuan",
+    "source",
+)
+_POOL_SNAPSHOT_CONFLICT = ("trade_date", "pool_name")
+_POOL_SNAPSHOT_UPDATE = ("payload", "source")
+_SENTIMENT_CONFLICT = ("trade_date",)
+_SENTIMENT_UPDATE = (
+    "temperature",
+    "stage",
+    "limit_up_count",
+    "limit_down_count",
+    "broken_board_count",
+    "broken_rate",
+    "up_count",
+    "down_count",
+    "max_continue_days",
+    "premium_rate",
+    "source",
+)
+_NEWS_CONFLICT = ("ts", "title")
+_NEWS_UPDATE = ("level", "summary", "symbols", "categories", "source")
+_THEME_CONFLICT = ("trade_date", "name")
+_THEME_UPDATE = ("rank", "core_avg_pct", "description", "core_count", "source")
+_THEME_STOCK_CONFLICT = ("trade_date", "theme_name", "code")
+_THEME_STOCK_UPDATE = (
+    "name",
+    "price",
+    "pct",
+    "turnover_rate",
+    "continue_days",
+    "selected_at",
+    "source",
+)
+_MONITOR_CONFLICT = ("trade_date", "kind", "code")
+_MONITOR_UPDATE = ("name", "reason", "source")
+_LADDER_CONFLICT = ("trade_date", "code")
+_LADDER_UPDATE = ("name", "continue_days", "first_seal_time", "source")
+_STOCK_CONFLICT = ("code",)
+_STOCK_UPDATE = ("name", "market", "board", "is_st", "list_date", "source")
+
+
+class StockRepository(BaseRepository):
+    """股票基础信息仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``code`` 幂等覆盖写入股票基础信息。"""
+        return await self.bulk_upsert(Stock, rows, _STOCK_CONFLICT, _STOCK_UPDATE)
+
+    async def get(self, code: str) -> Stock | None:
+        """按证券代码取单只股票。"""
+        return await self.session.get(Stock, code)
+
+    async def list_all(  # type: ignore[override]
+        self,
+        *,
+        market: str | None = None,
+        board: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[Stock]:
+        """列出股票（可按市场/板块过滤），按代码升序。"""
+        stmt = select(Stock)
+        if market is not None:
+            stmt = stmt.where(Stock.market == market)
+        if board is not None:
+            stmt = stmt.where(Stock.board == board)
+        stmt = stmt.order_by(Stock.code)
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def search(self, keyword: str) -> list[Stock]:
+        """按代码或简称模糊搜索（最多 50 条）。"""
+        pattern = f"%{keyword}%"
+        stmt = (
+            select(Stock)
+            .where(or_(Stock.code.ilike(pattern), Stock.name.ilike(pattern)))
+            .order_by(Stock.code)
+            .limit(50)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class DailyBarRepository(BaseRepository):
+    """日线行情仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(code, trade_date)`` 幂等覆盖写入日线。"""
+        return await self.bulk_upsert(DailyBar, rows, _DAILY_BAR_CONFLICT, _DAILY_BAR_UPDATE)
+
+    async def get_range(self, code: str, start: date, end: date) -> list[DailyBar]:
+        """取某只股票 ``[start, end]`` 区间的日线，按交易日升序。"""
+        stmt = (
+            select(DailyBar)
+            .where(DailyBar.code == code, DailyBar.trade_date.between(start, end))
+            .order_by(DailyBar.trade_date)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_latest(self, code: str) -> DailyBar | None:
+        """取某只股票最新一根日线。"""
+        stmt = (
+            select(DailyBar)
+            .where(DailyBar.code == code)
+            .order_by(DailyBar.trade_date.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)
+
+    async def get_by_date(
+        self, trade_date: date, codes: Sequence[str] | None = None
+    ) -> list[DailyBar]:
+        """取某交易日的日线；``codes`` 非空时只取指定代码集合。"""
+        stmt = select(DailyBar).where(DailyBar.trade_date == trade_date)
+        if codes:
+            stmt = stmt.where(DailyBar.code.in_(list(codes)))
+        stmt = stmt.order_by(DailyBar.code)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def latest_trade_date(self) -> date | None:
+        """库中最新交易日。"""
+        value = await self.session.scalar(select(func.max(DailyBar.trade_date)))
+        return value if isinstance(value, date) else None
+
+
+class MinuteBarRepository(BaseRepository):
+    """分时行情仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(code, trade_date, minute_index)`` 幂等覆盖写入分时。"""
+        return await self.bulk_upsert(MinuteBar, rows, _MINUTE_BAR_CONFLICT, _MINUTE_BAR_UPDATE)
+
+    async def get_day(self, code: str, trade_date: date) -> list[MinuteBar]:
+        """取某股某日的全部分时，按分钟序号升序。"""
+        stmt = (
+            select(MinuteBar)
+            .where(MinuteBar.code == code, MinuteBar.trade_date == trade_date)
+            .order_by(MinuteBar.minute_index)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_day_bulk(self, codes: Sequence[str], trade_date: date) -> list[MinuteBar]:
+        """一次取多只股票某日的分时，按代码、分钟序号升序。"""
+        if not codes:
+            return []
+        stmt = (
+            select(MinuteBar)
+            .where(MinuteBar.code.in_(list(codes)), MinuteBar.trade_date == trade_date)
+            .order_by(MinuteBar.code, MinuteBar.minute_index)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class LimitUpPoolRepository(BaseRepository):
+    """涨停池仓储（含多种池型）。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(trade_date, pool_type, code)`` 幂等覆盖写入涨停池。"""
+        return await self.bulk_upsert(LimitUpPool, rows, _LIMIT_UP_CONFLICT, _LIMIT_UP_UPDATE)
+
+    async def get_pool(self, trade_date: date, pool_type: str) -> list[LimitUpPool]:
+        """取某日某池型的成分，按连板天数降序。"""
+        stmt = (
+            select(LimitUpPool)
+            .where(LimitUpPool.trade_date == trade_date, LimitUpPool.pool_type == pool_type)
+            .order_by(LimitUpPool.continue_days.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_date(self, trade_date: date) -> list[LimitUpPool]:
+        """取某日全部池型记录，按池型、连板天数降序。"""
+        stmt = (
+            select(LimitUpPool)
+            .where(LimitUpPool.trade_date == trade_date)
+            .order_by(LimitUpPool.pool_type, LimitUpPool.continue_days.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def filter_by_continue_days(self, trade_date: date, min_days: int) -> list[LimitUpPool]:
+        """取某日连板天数 ``>= min_days`` 的记录，按连板天数降序。"""
+        stmt = (
+            select(LimitUpPool)
+            .where(
+                LimitUpPool.trade_date == trade_date,
+                LimitUpPool.continue_days >= min_days,
+            )
+            .order_by(LimitUpPool.continue_days.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def codes_between(
+        self, start: date, end: date, pool_type: str = "limit_up"
+    ) -> list[tuple[str, str]]:
+        """取 ``[start, end]`` 区间内某池型的 ``(code, name)`` 去重列表（按代码升序）。
+
+        供采集任务从「近期已入库的涨停池」推导策略相关标的（见 ``app.ingest.tasks``）。
+        """
+        stmt = (
+            select(LimitUpPool.code, LimitUpPool.name)
+            .where(
+                LimitUpPool.trade_date.between(start, end),
+                LimitUpPool.pool_type == pool_type,
+            )
+            .distinct()
+            .order_by(LimitUpPool.code)
+        )
+        result = await self.session.execute(stmt)
+        return [(code, name) for code, name in result.all()]
+
+    async def latest_trade_date(self) -> date | None:
+        """库中最新交易日。"""
+        value = await self.session.scalar(select(func.max(LimitUpPool.trade_date)))
+        return value if isinstance(value, date) else None
+
+
+class PoolSnapshotRepository(BaseRepository):
+    """池快照原始载荷仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(trade_date, pool_name)`` 幂等覆盖写入池快照。"""
+        return await self.bulk_upsert(
+            PoolSnapshot, rows, _POOL_SNAPSHOT_CONFLICT, _POOL_SNAPSHOT_UPDATE
+        )
+
+    async def get(self, trade_date: date, pool_name: str) -> PoolSnapshot | None:
+        """取某日某池名的快照载荷。"""
+        stmt = select(PoolSnapshot).where(
+            PoolSnapshot.trade_date == trade_date, PoolSnapshot.pool_name == pool_name
+        )
+        return await self.session.scalar(stmt)
+
+
+class MarketSentimentRepository(BaseRepository):
+    """市场情绪仓储（每交易日一行）。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``trade_date`` 幂等覆盖写入情绪指标。"""
+        return await self.bulk_upsert(MarketSentiment, rows, _SENTIMENT_CONFLICT, _SENTIMENT_UPDATE)
+
+    async def get(self, trade_date: date) -> MarketSentiment | None:
+        """取某交易日情绪指标。"""
+        stmt = select(MarketSentiment).where(MarketSentiment.trade_date == trade_date)
+        return await self.session.scalar(stmt)
+
+    async def get_history(self, days: int) -> list[MarketSentiment]:
+        """取最近 ``days`` 个交易日的情绪，**按交易日升序**（供情绪走势图）。"""
+        stmt = (
+            select(MarketSentiment).order_by(MarketSentiment.trade_date.desc()).limit(max(1, days))
+        )
+        result = await self.session.execute(stmt)
+        return list(reversed(list(result.scalars().all())))
+
+    async def latest(self) -> MarketSentiment | None:
+        """取最新一条情绪指标。"""
+        stmt = select(MarketSentiment).order_by(MarketSentiment.trade_date.desc()).limit(1)
+        return await self.session.scalar(stmt)
+
+
+class NewsFlashRepository(BaseRepository):
+    """快讯仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(ts, title)`` 幂等覆盖写入快讯。"""
+        return await self.bulk_upsert(NewsFlash, rows, _NEWS_CONFLICT, _NEWS_UPDATE)
+
+    async def list_recent(
+        self, limit: int = 50, level: str | None = None, keyword: str | None = None
+    ) -> list[NewsFlash]:
+        """按发布时间倒序取快讯。
+
+        Args:
+            limit: 返回条数上限。
+            level: 仅取该重要级别。
+            keyword: 关键词，命中标题**或**摘要即返回。
+        """
+        stmt = select(NewsFlash)
+        if level is not None:
+            stmt = stmt.where(NewsFlash.level == level)
+        if keyword:
+            pattern = f"%{keyword}%"
+            stmt = stmt.where(or_(NewsFlash.title.ilike(pattern), NewsFlash.summary.ilike(pattern)))
+        stmt = stmt.order_by(NewsFlash.ts.desc()).limit(max(1, limit))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_between(self, start_ts: Any, end_ts: Any) -> list[NewsFlash]:
+        """取发布时间落在 ``[start_ts, end_ts]`` 的快讯，按时间升序。"""
+        stmt = (
+            select(NewsFlash).where(NewsFlash.ts.between(start_ts, end_ts)).order_by(NewsFlash.ts)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class ThemeRepository(BaseRepository):
+    """主题（板块）仓储，含主题成分股。"""
+
+    async def upsert_many(
+        self,
+        themes: Sequence[Mapping[str, Any]],
+        stocks: Sequence[Mapping[str, Any]] | None = None,
+    ) -> int:
+        """幂等覆盖写入主题榜与其成分股，返回写入总行数。
+
+        主题按 ``(trade_date, name)``、成分股按 ``(trade_date, theme_name, code)`` 去重。
+        """
+        total = await self.bulk_upsert(Theme, themes, _THEME_CONFLICT, _THEME_UPDATE)
+        if stocks:
+            total += await self.bulk_upsert(
+                ThemeStock, stocks, _THEME_STOCK_CONFLICT, _THEME_STOCK_UPDATE
+            )
+        return total
+
+    async def get_by_date(self, trade_date: date) -> list[Theme]:
+        """取某日主题强度榜，按排名升序。"""
+        stmt = select(Theme).where(Theme.trade_date == trade_date).order_by(Theme.rank)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_stocks(self, trade_date: date, theme_name: str) -> list[ThemeStock]:
+        """取某日某主题的成分股，按当日涨幅降序。"""
+        stmt = (
+            select(ThemeStock)
+            .where(ThemeStock.trade_date == trade_date, ThemeStock.theme_name == theme_name)
+            .order_by(ThemeStock.pct.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def available_dates(self, limit: int = 30) -> list[date]:
+        """可取的主题交易日列表（去重，倒序），供历史下拉。"""
+        stmt = (
+            select(Theme.trade_date)
+            .distinct()
+            .order_by(Theme.trade_date.desc())
+            .limit(max(1, limit))
+        )
+        result = await self.session.execute(stmt)
+        return [value for value in result.scalars().all() if isinstance(value, date)]
+
+
+class MonitorStockRepository(BaseRepository):
+    """监管名单仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(trade_date, kind, code)`` 幂等覆盖写入监管名单。"""
+        return await self.bulk_upsert(MonitorStock, rows, _MONITOR_CONFLICT, _MONITOR_UPDATE)
+
+    async def get_by_date(self, trade_date: date, kind: str | None = None) -> list[MonitorStock]:
+        """取某日监管名单，可按类型过滤，按代码升序。"""
+        stmt = select(MonitorStock).where(MonitorStock.trade_date == trade_date)
+        if kind is not None:
+            stmt = stmt.where(MonitorStock.kind == kind)
+        stmt = stmt.order_by(MonitorStock.code)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class LadderRepository(BaseRepository):
+    """连板天梯仓储。"""
+
+    async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """按 ``(trade_date, code)`` 幂等覆盖写入天梯。"""
+        return await self.bulk_upsert(LadderRow, rows, _LADDER_CONFLICT, _LADDER_UPDATE)
+
+    async def get_range(
+        self, start: date, end: date, min_continue_days: int = 2
+    ) -> list[LadderRow]:
+        """取 ``[start, end]`` 区间内连板天数达标的天梯记录。
+
+        按交易日升序、同日内连板天数降序，便于前端按日分组渲染。
+        """
+        stmt = (
+            select(LadderRow)
+            .where(
+                LadderRow.trade_date.between(start, end),
+                LadderRow.continue_days >= min_continue_days,
+            )
+            .order_by(LadderRow.trade_date, LadderRow.continue_days.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def available_dates(self, limit: int = 30) -> list[date]:
+        """可取的交易日列表（去重，倒序）。"""
+        stmt = (
+            select(LadderRow.trade_date)
+            .distinct()
+            .order_by(LadderRow.trade_date.desc())
+            .limit(max(1, limit))
+        )
+        result = await self.session.execute(stmt)
+        return [value for value in result.scalars().all() if isinstance(value, date)]
+
+
+__all__ = [
+    "DailyBarRepository",
+    "LadderRepository",
+    "LimitUpPoolRepository",
+    "MarketSentimentRepository",
+    "MinuteBarRepository",
+    "MonitorStockRepository",
+    "NewsFlashRepository",
+    "PoolSnapshotRepository",
+    "StockRepository",
+    "ThemeRepository",
+]

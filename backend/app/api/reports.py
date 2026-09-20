@@ -18,7 +18,9 @@ from app.schemas.report import (
     BacktestRunRequest,
     BacktestRunsResponse,
 )
+from app.schemas.review import ReviewResponse
 from app.services.report_service import ReportService
+from app.services.review_service import ReviewService
 
 router = APIRouter(tags=["reports"])
 
@@ -26,6 +28,11 @@ router = APIRouter(tags=["reports"])
 def get_report_service(repos: Repositories = Depends(get_repositories)) -> ReportService:
     """请求级报告服务。"""
     return ReportService(repos)
+
+
+def get_review_service(repos: Repositories = Depends(get_repositories)) -> ReviewService:
+    """请求级复盘服务。"""
+    return ReviewService(repos)
 
 
 @router.get("/advice", response_model=AdviceResponse)
@@ -58,6 +65,26 @@ async def get_advice_dates(
 ) -> DatesResponse:
     """有建议报告的交易日列表（去重倒序）。"""
     return await service.advice_dates(limit)
+
+
+@router.get("/review", response_model=ReviewResponse)
+async def get_review(
+    date_: date | None = Query(default=None, alias="date", description="交易日；缺省取最新"),
+    _: User = Depends(require_page(PageKey.REVIEW)),
+    service: ReviewService = Depends(get_review_service),
+) -> ReviewResponse:
+    """取某交易日复盘聚合（情绪 / 池型 / 天梯 / 建议回溯）。"""
+    return await service.review(date_)
+
+
+@router.get("/review/dates", response_model=DatesResponse)
+async def get_review_dates(
+    limit: int | None = Query(default=None, ge=1),
+    _: User = Depends(require_page(PageKey.REVIEW)),
+    service: ReviewService = Depends(get_review_service),
+) -> DatesResponse:
+    """可复盘交易日列表（去重倒序）。"""
+    return await service.review_dates(limit)
 
 
 @router.get("/backtest/runs", response_model=BacktestRunsResponse)

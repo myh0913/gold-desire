@@ -348,7 +348,36 @@ class IngestScheduler:
                 executed.append(result)
 
             await self._maybe_maintenance(repos, session, target_date, moment, window)
+            await self._maybe_strategies(repos, target_date, moment, window)
+            await session.commit()
         return executed
+
+    async def _maybe_strategies(
+        self,
+        repos: Repositories,
+        trade_date: date,
+        now: datetime,
+        window: str | Window | None,
+    ) -> None:
+        """盘后窗口内执行一次策略阶段（POOL + INTRADAY；幂等见 strategy_hooks）。
+
+        策略阶段依赖**完整日线/分时**（dragon 样本要求 D+1/D+2 已入库），
+        故挂在 postmarket 采集之后而非盘中——产出为确认记录，供建议/复盘消费。
+        """
+        from app.ingest.strategy_hooks import run_strategy_phases
+
+        if window is not None:
+            name = window.name if isinstance(window, Window) else str(window)
+            if name != "postmarket":
+                return
+        elif not in_window(now, self._window("postmarket")):
+            return
+        try:
+            await run_strategy_phases(repos, self.settings, trade_date)
+        except Exception:
+            logger.exception(
+                "strategy_phases_failed", extra={"trade_date": trade_date.isoformat()}
+            )
 
     async def _maybe_maintenance(
         self,

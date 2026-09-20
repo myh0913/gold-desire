@@ -299,6 +299,21 @@ async def ws_endpoint(
         manager.unregister(conn_id)
 
 
+async def _start_ws_bus() -> None:
+    """启动跨进程 WS 总线：注入本地广播器并订阅 Redis ``ws:*``（api 进程侧）。"""
+    from app.core import ws_bus
+
+    ws_bus.set_local_broadcaster(_manager.broadcast)
+    import asyncio
+
+    asyncio.create_task(ws_bus.subscribe_ws_bus())
+
+
 def attach_ws(app: FastAPI) -> None:
-    """把 ``WS /ws`` 挂到应用上（``main.py`` 需调用一次）。"""
+    """把 ``WS /ws`` 挂到应用上（``main.py`` 需调用一次）。
+
+    同时注册启动钩子接入 :mod:`app.core.ws_bus`（worker 进程发布的跨进程事件
+    经 Redis 中转到本进程连接；无 Redis 时发布端直接走本地广播）。
+    """
     app.add_api_websocket_route("/ws", ws_endpoint)
+    app.router.on_startup.append(_start_ws_bus)

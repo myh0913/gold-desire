@@ -46,7 +46,26 @@ import type {
   StrategyOut,
   StrategyStateOut,
 } from '@/types/config';
-import type { SentimentHistoryResponse, SentimentResponse } from '@/types/market';
+import type {
+  DatesResponse,
+  LadderPage,
+  MonitorResponse,
+  NewsFlashPage,
+  PoolsResponse,
+  PoolResponse,
+  SentimentHistoryResponse,
+  SentimentResponse,
+  ThemeStocksResponse,
+  ThemesResponse,
+} from '@/types/market';
+import type {
+  AdviceLatestResponse,
+  AdviceResponse,
+  BacktestRunOut,
+  BacktestRunsResponse,
+  BacktestRunRequest,
+} from '@/types/report';
+import type { ReviewResponse } from '@/types/review';
 import { APP_BASE } from './appBase';
 import { clearAccessToken, getAccessToken } from './tokenStore';
 
@@ -273,9 +292,72 @@ export const configApi = {
   },
 };
 
-/** 行情读端点（总览页所需子集）。 */
+/** 行情读端点（总览 + Phase 2 各页）。 */
 export const marketApi = {
   sentiment: (signal?: AbortSignal) => request<SentimentResponse>('/sentiment', { signal }),
   sentimentHistory: (days: number, signal?: AbortSignal) =>
     request<SentimentHistoryResponse>('/sentiment/history', { params: { days }, signal }),
+  pools: (params: { date?: string }, signal?: AbortSignal) =>
+    request<PoolsResponse>('/pools', { params, signal }),
+  pool: (
+    poolType: string,
+    params: { date?: string; min_continue_days?: number },
+    signal?: AbortSignal,
+  ) =>
+    request<PoolResponse>(`/pools/${encodeURIComponent(poolType)}`, {
+      params,
+      signal,
+    }),
+  ladder: (
+    params: {
+      start: string;
+      end: string;
+      min_continue_days?: number;
+      page?: number;
+      page_size?: number;
+    },
+    signal?: AbortSignal,
+  ) => request<LadderPage>('/ladder', { params, signal }),
+  ladderDates: (signal?: AbortSignal) =>
+    request<DatesResponse>('/ladder/dates', { signal }),
+  newsflash: (
+    params: { level?: string; keyword?: string; page?: number; page_size?: number },
+    signal?: AbortSignal,
+  ) => request<NewsFlashPage>('/newsflash', { params, signal }),
+  themes: (params: { date?: string }, signal?: AbortSignal) =>
+    request<ThemesResponse>('/themes', { params, signal }),
+  themeDates: (signal?: AbortSignal) =>
+    request<DatesResponse>('/themes/dates', { signal }),
+  themeStocks: (onDate: string, themeName: string, signal?: AbortSignal) =>
+    request<ThemeStocksResponse>(
+      `/themes/${encodeURIComponent(onDate)}/${encodeURIComponent(themeName)}/stocks`,
+      { signal },
+    ),
+  monitor: (params: { date?: string; kind?: string }, signal?: AbortSignal) =>
+    request<MonitorResponse>('/monitor', { params, signal }),
+};
+
+/** 报告读端点（建议 / 复盘 / 回测）。 */
+export const reportApi = {
+  advice: (
+    params: { date?: string; kind?: string; strategy_id?: string },
+    signal?: AbortSignal,
+  ) => request<AdviceResponse>('/advice', { params, signal }),
+  adviceLatest: (params: { date?: string }, signal?: AbortSignal) =>
+    request<AdviceLatestResponse>('/advice/latest', { params, signal }),
+  adviceDates: (signal?: AbortSignal) =>
+    request<DatesResponse>('/advice/dates', { signal }),
+  review: (params: { date?: string }, signal?: AbortSignal) =>
+    request<ReviewResponse>('/review', { params, signal }),
+  reviewDates: (signal?: AbortSignal) =>
+    request<DatesResponse>('/review/dates', { signal }),
+  backtestRuns: (signal?: AbortSignal) =>
+    request<BacktestRunsResponse>('/backtest/runs', { signal }),
+  backtestRun: (runId: string, signal?: AbortSignal) =>
+    request<BacktestRunOut>(
+      `/backtest/runs/${encodeURIComponent(runId)}`,
+      { signal },
+    ),
+  triggerBacktest: (body: BacktestRunRequest) =>
+    request<BacktestRunOut>('/backtest/run', { json: body }),
 };

@@ -18,7 +18,14 @@ import NoAccessPage from '@/pages/NoAccessPage';
 import OverviewPage from '@/pages/overview/OverviewPage';
 import QuantConfigPage from '@/pages/quantconfig/QuantConfigPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
-import PlaceholderPage from '@/pages/PlaceholderPage';
+import AdvicePage from '@/pages/advice/AdvicePage';
+import ReviewPage from '@/pages/review/ReviewPage';
+import PoolsPage from '@/pages/pools/PoolsPage';
+import LadderPage from '@/pages/ladder/LadderPage';
+import NewsflashPage from '@/pages/newsflash/NewsflashPage';
+import ThemesPage from '@/pages/themes/ThemesPage';
+import MonitorPage from '@/pages/monitor/MonitorPage';
+import BacktestPage from '@/pages/backtest/BacktestPage';
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -92,15 +99,14 @@ export default function App() {
             </RequirePage>
           }
         />
-        {/* Phase 2 占位：路由必须挂上，否则侧栏点了会命中通配显示无权限。 */}
-        <Route path="/advice" element={<RequirePage page="advice"><PlaceholderPage title="今日建议" /></RequirePage>} />
-        <Route path="/review" element={<RequirePage page="review"><PlaceholderPage title="复盘" /></RequirePage>} />
-        <Route path="/pools" element={<RequirePage page="pools"><PlaceholderPage title="涨停池" /></RequirePage>} />
-        <Route path="/ladder" element={<RequirePage page="ladder"><PlaceholderPage title="连板天梯" /></RequirePage>} />
-        <Route path="/newsflash" element={<RequirePage page="newsflash"><PlaceholderPage title="快讯" /></RequirePage>} />
-        <Route path="/themes" element={<RequirePage page="themes"><PlaceholderPage title="主题" /></RequirePage>} />
-        <Route path="/monitor" element={<RequirePage page="monitor"><PlaceholderPage title="监管名单" /></RequirePage>} />
-        <Route path="/backtest" element={<RequirePage page="backtest"><PlaceholderPage title="回测" /></RequirePage>} />
+        <Route path="/advice" element={<RequirePage page="advice"><AdvicePage /></RequirePage>} />
+        <Route path="/review" element={<RequirePage page="review"><ReviewPage /></RequirePage>} />
+        <Route path="/pools" element={<RequirePage page="pools"><PoolsPage /></RequirePage>} />
+        <Route path="/ladder" element={<RequirePage page="ladder"><LadderPage /></RequirePage>} />
+        <Route path="/newsflash" element={<RequirePage page="newsflash"><NewsflashPage /></RequirePage>} />
+        <Route path="/themes" element={<RequirePage page="themes"><ThemesPage /></RequirePage>} />
+        <Route path="/monitor" element={<RequirePage page="monitor"><MonitorPage /></RequirePage>} />
+        <Route path="/backtest" element={<RequirePage page="backtest"><BacktestPage /></RequirePage>} />
         <Route path="*" element={<NoAccessPage />} />
       </Route>
     </Routes>

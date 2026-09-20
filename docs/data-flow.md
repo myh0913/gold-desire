@@ -95,8 +95,12 @@ std_* / derived_* 分区表（月分区，幂等覆盖写 upsert）
   用户拒绝握手（关闭码 4401）。
 - 协议：服务端 30s `heartbeat`；客户端 `ping` / `subscribe` / `unsubscribe`；
   推送 `{"type":<channel>,"channel":<channel>,"data":{...},"ts":<ms>}`。
-- 频道：`sentiment`（情绪）、`pool`（涨停池/采集完成）、`advice`（建议产出）、
+- 频道：`sentiment`（情绪）、`pool`（涨停池/采集完成/策略建池）、`advice`（建议产出）、
   `alert`（**仅 admin** 运维告警）。
+- 发布者：`alert` 由手动采集完成通知（`ingest_service`）；`pool` / `advice` 由盘后
+  策略阶段钩子（`ingest/strategy_hooks.py`）。**跨进程推送**经 Redis pub/sub 总线
+  （`core/ws_bus.py`）：worker 进程发布 → api 进程订阅中转到本进程连接；无 Redis
+  （单进程/内存缓存）时自动退化为进程内直发。
 - 前端客户端封装重连退避 + 心跳 + 半开检测，断线重连后按需经 REST 补数据。
 
 ## 5. 前端消费（frontend/）

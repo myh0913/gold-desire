@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // 与 Caddy 反代子路径一致(/gd)
+  base: '/gd/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

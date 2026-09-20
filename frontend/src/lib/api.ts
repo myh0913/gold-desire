@@ -47,6 +47,7 @@ import type {
   StrategyStateOut,
 } from '@/types/config';
 import type { SentimentHistoryResponse, SentimentResponse } from '@/types/market';
+import { APP_BASE } from './appBase';
 import { clearAccessToken, getAccessToken } from './tokenStore';
 
 /** 全局未授权事件名。 */
@@ -67,7 +68,10 @@ export class ApiError extends Error {
   }
 }
 
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+// 显式配置优先；否则补上应用挂载前缀（生产 '/gd'，本地 dev ''），
+// 使子路径反代部署下请求命中 /gd/api/*，而不是裸根路径 /api/*。
+const BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? `${APP_BASE}/api`;
 
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -142,13 +146,13 @@ export function getApiBaseUrl(): string {
   return BASE;
 }
 
-/** WebSocket 地址：优先 `VITE_WS_BASE`，否则按当前页面协议/主机推导 `/ws`。 */
+/** WebSocket 地址：优先 `VITE_WS_BASE`，否则按当前页面协议/主机推导 `<base>/ws`。 */
 export function getWsUrl(): string {
   const explicit = import.meta.env.VITE_WS_BASE as string | undefined;
   if (explicit) return explicit;
-  if (typeof window === 'undefined') return '/ws';
+  if (typeof window === 'undefined') return `${APP_BASE}/ws`;
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
+  return `${proto}//${window.location.host}${APP_BASE}/ws`;
 }
 
 const seg = (value: string) => encodeURIComponent(value);

@@ -17,6 +17,7 @@ from app.schemas.report import (
     BacktestRunOut,
     BacktestRunRequest,
     BacktestRunsResponse,
+    DragonPoolResponse,
 )
 from app.schemas.review import ReviewResponse
 from app.services.report_service import ReportService
@@ -67,6 +68,26 @@ async def get_advice_dates(
 ) -> DatesResponse:
     """有建议报告的交易日列表（去重倒序）。"""
     return await service.advice_dates(limit)
+
+
+@router.get("/dragon/pool", response_model=DragonPoolResponse)
+async def get_dragon_pool(
+    date_: date | None = Query(default=None, alias="date"),
+    _: User = Depends(require_page(PageKey.ADVICE)),
+    service: ReportService = Depends(get_report_service),
+) -> DragonPoolResponse:
+    """取某交易日盘后建池候选（缺省取最近有候选的交易日）。"""
+    return await service.dragon_pool(on_date=date_)
+
+
+@router.get("/dragon/pool/dates", response_model=DatesResponse)
+async def get_dragon_pool_dates(
+    limit: int | None = Query(default=None, ge=1),
+    _: User = Depends(require_page(PageKey.ADVICE)),
+    service: ReportService = Depends(get_report_service),
+) -> DatesResponse:
+    """有盘后建池候选的交易日列表（去重倒序）。"""
+    return await service.dragon_pool_dates(limit)
 
 
 @router.get("/review", response_model=ReviewResponse)

@@ -28,6 +28,7 @@ from app.models.derived import (
     AgentSession,
     AgentToolCall,
     BacktestRun,
+    DragonPoolCandidate,
     IngestJob,
 )
 from app.models.market import (
@@ -55,6 +56,7 @@ __all__ = [
     "DailyBar",
     "DatasourceHealth",
     "DatasourceRegistry",
+    "DragonPoolCandidate",
     "FactorConfig",
     "FactorDef",
     "IngestJob",

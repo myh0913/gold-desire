@@ -1,5 +1,6 @@
-"""派生产物仓储（``derived_*`` 语义）：建议报告、回测任务、采集任务。
+"""派生产物仓储（``derived_*`` 语义）：建池候选、建议报告、回测任务、采集任务。
 
+- :class:`DragonPoolRepository`：盘后建池候选按 ``(trade_date, strategy_id)`` 快照整体替换。
 - :class:`AdviceReportRepository`：建议报告按 ``(trade_date, kind, strategy_id, ran_at)`` 幂等覆盖。
 - :class:`BacktestRunRepository`：回测任务状态机（pending → running → succeeded/failed）。
 - :class:`IngestJobRepository`：采集任务明细与**健康度汇总**（各能力最近成功/失败 + 连续失败次数）。
@@ -12,9 +13,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models.derived import AdviceReport, BacktestRun, IngestJob
+from app.models.derived import AdviceReport, BacktestRun, DragonPoolCandidate, IngestJob
 from app.repositories.base import BaseRepository
 
 _TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
@@ -42,6 +43,57 @@ class CapabilityHealth:
     last_success_at: datetime | None
     last_failure_at: datetime | None
     consecutive_failures: int
+
+
+class DragonPoolRepository(BaseRepository):
+    """盘后建池候选仓储（快照语义）。"""
+
+    async def replace_pool(
+        self, trade_date: date, strategy_id: str, rows: Sequence[Mapping[str, Any]]
+    ) -> int:
+        """整体替换某日某策略的建池候选（先删后插，同事务原子生效）。
+
+        ``rows`` 为空同样清空该日候选（候选结构消失是合法结果）。
+        """
+        await self.delete_where(
+            DragonPoolCandidate,
+            DragonPoolCandidate.trade_date == trade_date,
+            DragonPoolCandidate.strategy_id == strategy_id,
+        )
+        for row in rows:
+            self.session.add(
+                DragonPoolCandidate(trade_date=trade_date, strategy_id=strategy_id, **row)
+            )
+        await self.session.flush()
+        return len(rows)
+
+    async def get_by_date(
+        self, trade_date: date, strategy_id: str | None = None
+    ) -> list[DragonPoolCandidate]:
+        """取某日建池候选，可按策略过滤，按代码排序。"""
+        stmt = select(DragonPoolCandidate).where(DragonPoolCandidate.trade_date == trade_date)
+        if strategy_id is not None:
+            stmt = stmt.where(DragonPoolCandidate.strategy_id == strategy_id)
+        stmt = stmt.order_by(DragonPoolCandidate.code)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def latest_date(self, strategy_id: str | None = None) -> date | None:
+        """有建池候选的最近交易日；无数据返回 ``None``。"""
+        stmt = select(func.max(DragonPoolCandidate.trade_date))
+        if strategy_id is not None:
+            stmt = stmt.where(DragonPoolCandidate.strategy_id == strategy_id)
+        value = await self.session.scalar(stmt)
+        return value if isinstance(value, date) else None
+
+    async def list_dates(self, limit: int = 30, strategy_id: str | None = None) -> list[date]:
+        """有建池候选的交易日列表（去重倒序），供历史下拉。"""
+        stmt = select(DragonPoolCandidate.trade_date).distinct()
+        if strategy_id is not None:
+            stmt = stmt.where(DragonPoolCandidate.strategy_id == strategy_id)
+        stmt = stmt.order_by(DragonPoolCandidate.trade_date.desc()).limit(max(1, limit))
+        result = await self.session.execute(stmt)
+        return [value for value in result.scalars().all() if isinstance(value, date)]
 
 
 class AdviceReportRepository(BaseRepository):
@@ -254,5 +306,6 @@ __all__ = [
     "AdviceReportRepository",
     "BacktestRunRepository",
     "CapabilityHealth",
+    "DragonPoolRepository",
     "IngestJobRepository",
 ]

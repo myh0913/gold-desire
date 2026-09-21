@@ -703,6 +703,16 @@ async def test_confirm_intraday_hook_emits_and_persists_advice() -> None:
         pool = await strategy.build_pool(ctx)
         assert [item["code"] for item in pool["candidates"]] == [code]
 
+        # 盘后建池落库（快照语义）：候选可在 dragon_pool 表回查，供量化选股页展示
+        pool_rows = await repos.dragon_pool.get_by_date(date(2026, 1, 8))
+        assert [row.code for row in pool_rows] == [code]
+        assert pool_rows[0].d_date == date(2026, 1, 7)
+        assert pool_rows[0].strategy_id == "dragon"
+
+        # 重跑整体替换，不产生重复行
+        await strategy.build_pool(ctx)
+        assert len(await repos.dragon_pool.get_by_date(date(2026, 1, 8))) == 1
+
         result = await strategy.confirm_intraday(ctx)
         assert len(result["advices"]) == 1
         advice = result["advices"][0]

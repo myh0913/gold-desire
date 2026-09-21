@@ -48,7 +48,7 @@ class PageMeta:
 
 _DEFAULT_PAGES: tuple[PageMeta, ...] = (
     PageMeta(PageKey.OVERVIEW.value, "总览"),
-    PageMeta(PageKey.ADVICE.value, "今日建议"),
+    PageMeta(PageKey.ADVICE.value, "量化选股"),
     PageMeta(PageKey.REVIEW.value, "复盘"),
     PageMeta(PageKey.POOLS.value, "涨停池"),
     PageMeta(PageKey.LADDER.value, "连板天梯"),

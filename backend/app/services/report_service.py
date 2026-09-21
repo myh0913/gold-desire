@@ -29,6 +29,8 @@ from app.schemas.report import (
     AdviceResponse,
     BacktestRunOut,
     BacktestRunsResponse,
+    DragonPoolItemOut,
+    DragonPoolResponse,
 )
 from app.services.cache_policy import CachePolicy, get_cache_policy, query_key
 from app.services.paging import clamp_limit
@@ -126,6 +128,42 @@ class ReportService:
 
         async def loader() -> DatesResponse:
             dates = await self._repos.advice_reports.list_dates(effective)
+            return DatesResponse(dates=dates, limit=effective)
+
+        return await self._policy.get_or_load(
+            "report", key, loader, DatesResponse.model_validate
+        )
+
+    # -------------------------------------------------------------- 盘后建池
+
+    async def dragon_pool(self, *, on_date: date | None) -> DragonPoolResponse:
+        """取某交易日盘后建池候选（``date`` 缺省用最近有候选的交易日）。"""
+        key = query_key("report", {"view": "dragon_pool", "date": _iso(on_date)})
+
+        async def loader() -> DragonPoolResponse:
+            target = on_date
+            if target is None:
+                target = await self._repos.dragon_pool.latest_date()
+            rows = (
+                await self._repos.dragon_pool.get_by_date(target) if target is not None else []
+            )
+            return DragonPoolResponse(
+                trade_date=target,
+                strategy_id=rows[0].strategy_id if rows else None,
+                items=[DragonPoolItemOut.model_validate(row) for row in rows],
+            )
+
+        return await self._policy.get_or_load(
+            "report", key, loader, DragonPoolResponse.model_validate
+        )
+
+    async def dragon_pool_dates(self, limit: int | None) -> DatesResponse:
+        """有盘后建池候选的交易日列表（去重倒序）。"""
+        effective = clamp_limit(limit, default=30)
+        key = query_key("report", {"view": "dragon_pool_dates", "limit": effective})
+
+        async def loader() -> DatesResponse:
+            dates = await self._repos.dragon_pool.list_dates(effective)
             return DatesResponse(dates=dates, limit=effective)
 
         return await self._policy.get_or_load(

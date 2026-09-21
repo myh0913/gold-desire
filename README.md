@@ -305,7 +305,7 @@
 > （`backend/app/engine/`）、盘后自动执行（`backend/app/ingest/strategy_hooks.py`：
 > postmarket 窗口跑 POOL→INTRADAY，幂等 + 失败重试）、WS 实时推送
 > （`advice`/`pool` 频道，跨进程经 `core/ws_bus.py` Redis 总线）、前端提示卡片
-> （今日建议页）与参数表 schema（量化配置页）。旧 quant-system 的 S1/S3/8% 止盈
+> （量化选股页，原「今日建议」）与参数表 schema（量化配置页）。旧 quant-system 的 S1/S3/8% 止盈
 > 从未进入 gold-desire，无需删除。
 >
 > **盘中提示已实现（2026-09-21）**：新增 `opening_match` 采集（09:25 撮合价，

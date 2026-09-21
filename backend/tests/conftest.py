@@ -57,11 +57,21 @@ def _reset_page_registry() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_read_cache() -> Iterator[None]:
-    """每个用例前后重置两级缓存策略，避免跨用例缓存串台。"""
+async def _reset_read_cache() -> AsyncIterator[None]:
+    """每个用例前后重置两级缓存：策略单例 + 进程级 L2 内存后端。
+
+    只 ``reset_cache_policy()`` 不够——L2（``get_cache()``）是进程级单例，
+    前一个用例经 ``get_or_load`` 写入的条目会跨用例/跨文件串台（如天梯矩阵
+    「空库」用例命中早前测试缓存的非空结果）。
+    """
     reset_cache_policy()
+    cache = get_cache()
+    if isinstance(cache, MemoryCache):
+        await cache.clear()
     yield
     reset_cache_policy()
+    if isinstance(cache, MemoryCache):
+        await cache.clear()
 
 
 @pytest.fixture

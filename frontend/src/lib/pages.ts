@@ -14,7 +14,7 @@ import type { RoleOut } from '@/types';
 /** 页面 key → 显示名覆盖表。**不是**权限矩阵，也不是页面清单。 */
 const PAGE_LABELS: Record<string, string> = {
   overview: '总览',
-  advice: '今日建议',
+  advice: '量化选股',
   review: '复盘',
   pools: '涨停池',
   ladder: '连板天梯',

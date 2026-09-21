@@ -34,6 +34,7 @@ from app.repositories.derived import (
     AdviceReportRepository,
     BacktestRunRepository,
     CapabilityHealth,
+    DragonPoolRepository,
     IngestJobRepository,
 )
 from app.repositories.market import (
@@ -63,6 +64,7 @@ __all__ = [
     "DailyBarRepository",
     "DatasourceHealthRepository",
     "DatasourceRegistryRepository",
+    "DragonPoolRepository",
     "FactorConfigRepository",
     "FactorDefRepository",
     "IngestJobRepository",
@@ -98,6 +100,7 @@ class Repositories:
     minute_bars: MinuteBarRepository
     limit_up_pool: LimitUpPoolRepository
     pool_snapshot: PoolSnapshotRepository
+    dragon_pool: DragonPoolRepository
     market_sentiment: MarketSentimentRepository
     cycle_judgements: CycleJudgementRepository
     news_flash: NewsFlashRepository
@@ -129,6 +132,7 @@ class Repositories:
             minute_bars=MinuteBarRepository(session),
             limit_up_pool=LimitUpPoolRepository(session),
             pool_snapshot=PoolSnapshotRepository(session),
+            dragon_pool=DragonPoolRepository(session),
             market_sentiment=MarketSentimentRepository(session),
             cycle_judgements=CycleJudgementRepository(session),
             news_flash=NewsFlashRepository(session),

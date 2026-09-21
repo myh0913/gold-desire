@@ -34,13 +34,14 @@ from app.ingest.windows import Window, in_window, load_windows, window_by_name
 from app.models.market import LadderRow, LimitUpPool, MarketSentiment
 from app.repositories import LimitUpPoolRepository
 from app.repositories.retention import (
-    LADDER_RETENTION_TRADING_DAYS,
+    DAILY_BAR_RETENTION_TRADING_DAYS,
+    LADDER_RETENTION_DAYS,
     POOL_RETENTION_TRADING_DAYS,
     SENTIMENT_RETENTION_TRADING_DAYS,
     TRADING_DAY_FALLBACK_DAYS,
     run_retention,
 )
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -395,10 +396,12 @@ async def test_pool_retention_keeps_last_30_trading_days(session: AsyncSession) 
     assert sorted(remaining) == days[5:]
 
 
-async def test_ladder_retention_keeps_last_30_trading_days(session: AsyncSession) -> None:
-    """连板天梯历史只留最近 30 个交易日（与上游 window.length=30 口径一致）。"""
-    days = [date(2026, 6, 1) + timedelta(days=offset) for offset in range(35)]
-    for day in days:
+async def test_ladder_retention_keeps_last_year(session: AsyncSession) -> None:
+    """连板天梯历史保留最近一年（365 自然日，用户 2026-09-22 决策）。"""
+    today = datetime.now(UTC).astimezone().date()  # 与 run_retention 的「本地今日」同口径
+    in_window = (today - timedelta(days=100), today - timedelta(days=10))
+    out_of_window = today - timedelta(days=400)
+    for day in (*in_window, out_of_window):
         session.add(
             LadderRow(
                 trade_date=day,
@@ -411,19 +414,50 @@ async def test_ladder_retention_keeps_last_30_trading_days(session: AsyncSession
         )
     await session.commit()
 
-    before = int(await session.scalar(select(func.count()).select_from(LadderRow)) or 0)
-    assert before == 35
+    report = await run_retention(session=session)
+    await session.commit()
+
+    assert LADDER_RETENTION_DAYS == 365
+    assert report.ladder_deleted == 1
+    assert report.ladder_cutoff == today - timedelta(days=365)
+    remaining = list(
+        (await session.execute(select(LadderRow.trade_date).distinct())).scalars().all()
+    )
+    assert set(remaining) == set(in_window)
+
+
+async def test_daily_bar_retention_keeps_last_60_trading_days(session: AsyncSession) -> None:
+    """日线历史只留最近 60 个交易日（用户 2026-09-22 决策；不足时按自然日回退）。"""
+    from app.models.market import DailyBar
+
+    today = datetime.now(UTC).astimezone().date()  # 与 run_retention 的「本地今日」同口径
+    # 库中仅 2 个交易日 → 走 45 自然日回退：46 天前的被删（严格早于起点），10 天前的保留。
+    for offset in (46, 10):
+        session.add(
+            DailyBar(
+                code="000001.SZ",
+                trade_date=today - timedelta(days=offset),
+                open=Decimal("10"),
+                high=Decimal("10"),
+                low=Decimal("10"),
+                close=Decimal("10"),
+                pre_close=Decimal("10"),
+                volume_shares=100,
+                amount_yuan=Decimal("1000"),
+                source="test",
+            )
+        )
+    await session.commit()
 
     report = await run_retention(session=session)
     await session.commit()
 
-    assert LADDER_RETENTION_TRADING_DAYS == 30
-    assert report.ladder_deleted == 5
-    assert report.ladder_cutoff == days[5]
+    assert DAILY_BAR_RETENTION_TRADING_DAYS == 60
+    assert report.daily_bars_deleted == 1
     remaining = list(
-        (await session.execute(select(LadderRow.trade_date).distinct())).scalars().all()
+        (await session.execute(select(DailyBar.trade_date).distinct())).scalars().all()
     )
-    assert sorted(remaining) == days[5:]
+    assert remaining == [today - timedelta(days=10)]
 
 
 async def test_sentiment_retention_keeps_last_30_trading_days(session: AsyncSession) -> None:

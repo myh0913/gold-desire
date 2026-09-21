@@ -32,6 +32,26 @@ export interface AdviceLatestResponse extends MarketMeta {
   item: AdviceReportOut | null;
 }
 
+/** 盘后建池候选行（`dragon_pool`，Phase.POOL 识别、次日开盘判定参考）。 */
+export interface DragonPoolItemOut {
+  trade_date: string;
+  strategy_id: string;
+  code: string;
+  name: string | null;
+  d_date: string;
+  boards: number;
+  d_amp_pct: number | null;
+  shape_label: string | null;
+  ran_at: string;
+}
+
+/** 某交易日盘后建池候选列表。 */
+export interface DragonPoolResponse extends MarketMeta {
+  trade_date: string | null;
+  strategy_id: string | null;
+  items: DragonPoolItemOut[];
+}
+
 /** 回测任务（`report` 含 A/B/C 三段汇总，未完成为 null）。 */
 export interface BacktestRunOut {
   run_id: string;

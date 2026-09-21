@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -26,6 +27,37 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, JsonType, TimestampMixin
+
+
+class DragonPoolCandidate(Base):
+    """龙回头盘后建池候选（Phase.POOL 识别的结构样本，供次日开盘判定参考）。
+
+    快照语义：同一 ``(trade_date, strategy_id)`` 重跑时**整体替换**（先删后插），
+    库中恒等于最近一次建池结果，不做行级 upsert。
+    """
+
+    __tablename__ = "dragon_pool"
+    __table_args__ = (Index("ix_dragon_pool_date_strategy", "trade_date", "strategy_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, doc="建池交易日（D 日）")
+    strategy_id: Mapped[str] = mapped_column(String(64), nullable=False, doc="策略标识")
+    code: Mapped[str] = mapped_column(String(16), nullable=False, doc="股票代码")
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True, doc="股票名称")
+    d_date: Mapped[date] = mapped_column(Date, nullable=False, doc="首阴日（D）")
+    boards: Mapped[int] = mapped_column(Integer, nullable=False, doc="首阴前连板数")
+    d_amp_pct: Mapped[float | None] = mapped_column(
+        Numeric(10, 4), nullable=True, doc="首阴日振幅（%）"
+    )
+    shape_label: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, doc="首阴日分时形态标签"
+    )
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, doc="建池运行时间"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class AdviceReport(Base):
@@ -177,5 +209,6 @@ __all__ = [
     "AgentSession",
     "AgentToolCall",
     "BacktestRun",
+    "DragonPoolCandidate",
     "IngestJob",
 ]

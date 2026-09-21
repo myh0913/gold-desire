@@ -66,6 +66,7 @@ import type {
   BacktestRunOut,
   BacktestRunsResponse,
   BacktestRunRequest,
+  DragonPoolResponse,
 } from '@/types/report';
 import type { ReviewResponse } from '@/types/review';
 import { APP_BASE } from './appBase';
@@ -361,6 +362,10 @@ export const reportApi = {
     request<AdviceLatestResponse>('/advice/latest', { params, signal }),
   adviceDates: (signal?: AbortSignal) =>
     request<DatesResponse>('/advice/dates', { signal }),
+  dragonPool: (params: { date?: string }, signal?: AbortSignal) =>
+    request<DragonPoolResponse>('/dragon/pool', { params, signal }),
+  dragonPoolDates: (signal?: AbortSignal) =>
+    request<DatesResponse>('/dragon/pool/dates', { signal }),
   review: (params: { date?: string }, signal?: AbortSignal) =>
     request<ReviewResponse>('/review', { params, signal }),
   reviewDates: (signal?: AbortSignal) =>

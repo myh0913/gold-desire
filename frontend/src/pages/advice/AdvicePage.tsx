@@ -1,8 +1,10 @@
 /**
- * 今日建议页：策略结构化建议卡片 + WS 实时刷新。
+ * 量化选股页（原「今日建议」）：盘后建池候选 + 策略结构化建议卡片，WS 实时刷新。
  *
- * - 数据：`GET /api/advice?date=`（缺省最近有报告的交易日）+ 日期下拉（`/api/advice/dates`）；
- * - 实时：订阅 WS `advice` 频道，收到推送即失效查询重拉（策略盘后落库后自动出现）；
+ * - 盘后建池（次日参考）：`GET /api/dragon/pool`（缺省最近有候选的交易日）——
+ *   Phase.POOL 盘后落库的候选标的（用户 2026-09-22 决策）；
+ * - 实时建议：`GET /api/advice?date=`（缺省最近有报告的交易日）+ 日期下拉；
+ * - 实时：订阅 WS `advice` / `pool` 频道，收到推送即失效查询重拉；
  * - 卡片：路次（S2/S4）/ 标的 / 买点 / 建议仓位 / 止损价 / 卖出时点 / 硬门槛与加分项明细。
  */
 
@@ -18,28 +20,37 @@ import { StaleNotice } from '@/components/common/StaleNotice';
 import { reportApi } from '@/lib/api';
 import { formatPercentPlain } from '@/lib/format';
 import { getWsClient } from '@/lib/ws';
-import type { AdviceGate, AdviceReportOut, DragonAdvicePayload } from '@/types/report';
+import type {
+  AdviceGate,
+  AdviceReportOut,
+  DragonAdvicePayload,
+  DragonPoolItemOut,
+} from '@/types/report';
 
 /** 报告域查询键（WS 推送失效用）。 */
 export const ADVICE_KEYS = {
   list: ['report', 'advice'] as const,
+  pool: ['report', 'dragon_pool'] as const,
 };
 
-/** 订阅 WS `advice` 频道：新建议落库即失效列表查询。 */
-function useAdviceStream(): void {
+/** 订阅 WS `advice` / `pool` 频道：建议或建池候选落库即失效对应查询。 */
+function useStrategyStream(): void {
   const client = getWsClient();
   const queryClient = useQueryClient();
   useEffect(() => {
     client.connect();
-    client.subscribe(['advice']);
+    client.subscribe(['advice', 'pool']);
     const unsubscribe = client.onMessage((message) => {
       if (message.type === 'advice') {
         void queryClient.invalidateQueries({ queryKey: ADVICE_KEYS.list });
       }
+      if (message.type === 'pool') {
+        void queryClient.invalidateQueries({ queryKey: ADVICE_KEYS.pool });
+      }
     });
     return () => {
       unsubscribe();
-      client.unsubscribe(['advice']);
+      client.unsubscribe(['advice', 'pool']);
     };
   }, [client, queryClient]);
 }
@@ -52,6 +63,77 @@ function pathBadgeVariant(pathId: string): 'default' | 'secondary' | 'outline' {
   if (pathId === 'S2') return 'default';
   if (pathId === 'S4') return 'secondary';
   return 'outline';
+}
+
+/** 盘后建池候选（次日参考）区块。 */
+function DragonPoolSection() {
+  const poolQuery = useQuery({
+    queryKey: [...ADVICE_KEYS.pool],
+    queryFn: ({ signal }) => reportApi.dragonPool({}, signal),
+  });
+  const items = useMemo(() => poolQuery.data?.items ?? [], [poolQuery.data]);
+
+  return (
+    <section className="space-y-2" data-testid="dragon-pool-section">
+      <div className="flex items-center gap-2">
+        <h2 className="text-base font-semibold">盘后建池（次日参考）</h2>
+        {poolQuery.data?.trade_date && (
+          <span className="text-muted-foreground text-xs">
+            建池日 {poolQuery.data.trade_date}
+          </span>
+        )}
+      </div>
+
+      {poolQuery.isLoading && <LoadingState className="min-h-24" />}
+      {poolQuery.isError && (
+        <ErrorState error={poolQuery.error} onRetry={() => void poolQuery.refetch()} />
+      )}
+      {poolQuery.isSuccess && items.length === 0 && (
+        <EmptyState
+          title="今日暂无建池候选"
+          description="策略在收盘后自动识别龙回头结构；识别到候选会经 WS 实时推送并出现在这里。"
+        />
+      )}
+      {items.length > 0 && (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <PoolCandidateRow key={`${item.code}-${item.d_date}`} item={item} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PoolCandidateRow({ item }: { item: DragonPoolItemOut }) {
+  return (
+    <Card data-testid="pool-candidate">
+      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 p-3">
+        <div className="min-w-32">
+          <span className="text-sm font-semibold">{item.name ?? item.code}</span>
+          <span className="text-muted-foreground ml-2 text-xs">{item.code}</span>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+          <div>
+            <dt className="text-muted-foreground">首阴日</dt>
+            <dd>{item.d_date}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">连板数</dt>
+            <dd>{item.boards}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">首阴振幅</dt>
+            <dd>{item.d_amp_pct != null ? formatPercentPlain(item.d_amp_pct, 1) : '--'}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">分时形态</dt>
+            <dd>{item.shape_label ?? '--'}</dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
+  );
 }
 
 function AdviceCard({ report }: { report: AdviceReportOut }) {
@@ -128,7 +210,7 @@ function AdviceCard({ report }: { report: AdviceReportOut }) {
 }
 
 export default function AdvicePage() {
-  useAdviceStream();
+  useStrategyStream();
   const [date, setDate] = useState<string>('');
 
   const datesQuery = useQuery({
@@ -149,12 +231,12 @@ export default function AdvicePage() {
   );
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-6 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">今日建议</h1>
+        <h1 className="text-xl font-semibold">量化选股</h1>
         <div className="flex items-center gap-2">
           <Label htmlFor="advice-date" className="text-sm">
-            交易日
+            建议交易日
           </Label>
           <Select
             id="advice-date"
@@ -180,31 +262,37 @@ export default function AdvicePage() {
         </div>
       </div>
 
-      {adviceQuery.data?.stale && (
-        <StaleNotice
-          stale={adviceQuery.data.stale}
-          dataDate={adviceQuery.data.data_date}
-          label="建议数据"
-        />
-      )}
+      <DragonPoolSection />
 
-      {adviceQuery.isLoading && <LoadingState className="min-h-48" />}
-      {adviceQuery.isError && (
-        <ErrorState error={adviceQuery.error} onRetry={() => void adviceQuery.refetch()} />
-      )}
-      {adviceQuery.isSuccess && reports.length === 0 && (
-        <EmptyState
-          title="暂无建议"
-          description="策略在盘后数据齐备时自动判定；有新建议会经 WS 实时推送并出现在这里。"
-        />
-      )}
-      {reports.length > 0 && (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {reports.map((report) => (
-            <AdviceCard key={`${report.ran_at}-${String(report.payload.code ?? '')}`} report={report} />
-          ))}
-        </div>
-      )}
+      <section className="space-y-2">
+        <h2 className="text-base font-semibold">实时建议</h2>
+
+        {adviceQuery.data?.stale && (
+          <StaleNotice
+            stale={adviceQuery.data.stale}
+            dataDate={adviceQuery.data.data_date}
+            label="建议数据"
+          />
+        )}
+
+        {adviceQuery.isLoading && <LoadingState className="min-h-48" />}
+        {adviceQuery.isError && (
+          <ErrorState error={adviceQuery.error} onRetry={() => void adviceQuery.refetch()} />
+        )}
+        {adviceQuery.isSuccess && reports.length === 0 && (
+          <EmptyState
+            title="暂无建议"
+            description="策略在盘后数据齐备时自动判定；有新建议会经 WS 实时推送并出现在这里。"
+          />
+        )}
+        {reports.length > 0 && (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {reports.map((report) => (
+              <AdviceCard key={`${report.ran_at}-${String(report.payload.code ?? '')}`} report={report} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

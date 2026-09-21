@@ -14,9 +14,35 @@ __all__ = [
     "BacktestRunOut",
     "BacktestRunRequest",
     "BacktestRunsResponse",
+    "DragonPoolItemOut",
+    "DragonPoolResponse",
 ]
 
 _ORM = ConfigDict(from_attributes=True)
+
+
+class DragonPoolItemOut(BaseModel):
+    """盘后建池候选行（``dragon_pool``，供次日开盘判定参考）。"""
+
+    model_config = _ORM
+
+    trade_date: date
+    strategy_id: str
+    code: str
+    name: str | None = None
+    d_date: date
+    boards: int
+    d_amp_pct: float | None = None
+    shape_label: str | None = None
+    ran_at: datetime
+
+
+class DragonPoolResponse(BaseModel):
+    """某交易日盘后建池候选列表。"""
+
+    trade_date: date | None = None
+    strategy_id: str | None = None
+    items: list[DragonPoolItemOut] = Field(default_factory=list)
 
 
 class AdviceReportOut(BaseModel):

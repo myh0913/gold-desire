@@ -243,7 +243,7 @@ async def test_diff_versions_reports_added_removed_changed(session: AsyncSession
 
 
 async def test_run_retention_deletes_only_expired(session: AsyncSession) -> None:
-    """raw 超 30 天、分时超 90 天被删；日线与建议报告永久保留。"""
+    """raw 超 30 天、分时超 90 天、日线超 60 交易日（回退 45 自然日）被删；建议报告永久保留。"""
     now = datetime.now(UTC)
     session.add(
         RawResponse(
@@ -296,7 +296,10 @@ async def test_run_retention_deletes_only_expired(session: AsyncSession) -> None
         ]
     )
     await DailyBarRepository(session).upsert_many(
-        [_daily_row("000001", trade_date=old_minute_date)]
+        [
+            _daily_row("000001", trade_date=old_minute_date),
+            _daily_row("000001", trade_date=new_minute_date),
+        ]
     )
     session.add(
         AdviceReport(
@@ -314,15 +317,17 @@ async def test_run_retention_deletes_only_expired(session: AsyncSession) -> None
 
     assert report.raw_responses_deleted == 1
     assert report.minute_bars_deleted == 1
+    assert report.daily_bars_deleted == 1
     assert await _row_count(session, RawResponse) == 1
     assert await _row_count(session, MinuteBar) == 1
-    # 永久表不受影响
+    # 日线只留最近 60 个交易日（库中不足 → 45 自然日回退）：120 天前被删，10 天前保留
     assert await _row_count(session, DailyBar) == 1
+    # 建议报告永久保留
     assert await _row_count(session, AdviceReport) == 1
 
 
 async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) -> None:
-    """快讯/主题 7 天、监管名单仅最新交易日、涨停池与天梯按最近 30 个交易日。"""
+    """快讯/主题 7 天、监管名单仅最新交易日、涨停池最近 30 交易日、天梯最近一年。"""
     now = datetime.now(UTC)
     today = now.date()
 
@@ -410,10 +415,9 @@ async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) ->
     assert report.theme_stocks_deleted == 1
     assert report.monitor_deleted == 1
     assert report.pools_deleted == 1
-    # 天梯按「最近 30 个交易日」保留：库中仅 2 个交易日 → 走 45 自然日回退，
-    # 120 天前那条被清掉，10 天前保留。
-    assert report.ladder_deleted == 1
-    assert await _row_count(session, LadderRow) == 1
+    # 天梯按最近一年（365 自然日）保留：120/10 天前都在窗口内，全保留。
+    assert report.ladder_deleted == 0
+    assert await _row_count(session, LadderRow) == 2
     # 情绪表未种数据：路径被覆盖且不报错
     assert report.sentiment_deleted == 0
     # 监管名单只剩最新交易日

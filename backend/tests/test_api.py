@@ -45,6 +45,8 @@ READ_ENDPOINTS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("/api/advice", {"date": "2026-06-03"}),
     ("/api/advice/latest", {"date": "2026-06-03"}),
     ("/api/advice/dates", {"limit": 10}),
+    ("/api/dragon/pool", {"date": "2026-06-03"}),
+    ("/api/dragon/pool/dates", {"limit": 10}),
     ("/api/backtest/runs", {"limit": 10}),
     ("/api/backtest/runs/run-test-0001", {}),
     ("/api/strategies", {}),

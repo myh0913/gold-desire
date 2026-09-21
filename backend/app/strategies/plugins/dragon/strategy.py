@@ -354,8 +354,28 @@ class DragonStrategy(BaseStrategy):
         """盘后建池：识别候选龙回头结构（≥2 连板波 + 紧邻首阴）。
 
         依赖 ``ctx.repos``（由框架注入）；无仓储（轻量上下文）时返回空候选池。
+        有仓储时把候选**落库**（``dragon_pool``，同日重跑整体替换）——这是
+        「量化选股」页「盘后建池（次日参考）」区块的数据来源。
         """
         samples = await self._window_samples(ctx)
+        if getattr(ctx, "repos", None) is not None:
+            ran_at = ctx.clock()
+            await ctx.repos.dragon_pool.replace_pool(
+                ctx.trade_date,
+                self.strategy_id,
+                [
+                    {
+                        "code": sample.code,
+                        "name": sample.name,
+                        "d_date": sample.D,
+                        "boards": sample.boards,
+                        "d_amp_pct": sample.d_amp_pct,
+                        "shape_label": sample.shape_label,
+                        "ran_at": ran_at,
+                    }
+                    for sample in samples
+                ],
+            )
         return {
             "strategy_id": self.strategy_id,
             "trade_date": ctx.trade_date.isoformat(),

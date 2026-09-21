@@ -390,12 +390,12 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
     IngestTaskDef(
         name="limit_up_pool",
         capability="limit_up_pool",
-        # 盘中轮询 + 整批替换：09:25 首封起每 10 分钟拉一次（午休 11:30-13:00 跳过），
+        # 交易时段轮询 + 整批替换：09:25 首封起每 10 分钟拉一次（午休 11:30-13:00 跳过），
         # 15:05 收口（收盘后仍有最后一刀）。库中只保留**最近一次**快照——
         # 「先涨停、后炸板」的票不会残留（replace 语义，非 upsert 并集）。
         # 下游读取一律走库（/api/pools），不直连上游。
         target="limit_up_pool_replace",
-        window=Window("intraday_pool", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
         interval_seconds=600,
         idempotency_key=_default_key,
         args_builder=_limit_up_pool_args,
@@ -415,8 +415,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         name="theme_rank",
         capability="theme_rank",
         target="theme_rank",
-        window=Window("tailpan", "14:45", "15:00"),
-        interval_seconds=0,
+        # 交易时段每 30 分钟一轮（主题榜变化慢于个股，半小时足够）。
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=1800,
         idempotency_key=_default_key,
         args_builder=_date_args,
     ),
@@ -424,8 +425,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         name="theme_stocks",
         capability="theme_stocks",
         target="theme_stocks",
-        window=Window("tailpan", "14:45", "15:00"),
-        interval_seconds=0,
+        # 与题材榜同窗口同节拍，保证「榜单 + 成分」始终同一时刻口径。
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=1800,
         idempotency_key=_default_key,
         args_builder=_date_args,
     ),
@@ -433,8 +435,10 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         name="ladder",
         capability="ladder",
         target="ladder",
-        window=Window("postmarket", "17:00", "18:00"),
-        interval_seconds=0,
+        # 交易时段每 10 分钟一轮：上游一次返回近 30 个交易日的完整矩阵，
+        # 重跑按 (trade_date, code) 幂等覆盖，盘中可持续刷新当日连板层。
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=600,
         idempotency_key=_default_key,
         args_builder=_date_args,
     ),
@@ -452,8 +456,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         name="market_sentiment",
         capability="market_sentiment",
         target="market_sentiment",
-        window=Window("postmarket", "17:00", "18:00"),
-        interval_seconds=0,
+        # 交易时段每 10 分钟一轮：上游返回当日分钟级情绪序列，取最新点入当日行。
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=600,
         idempotency_key=_default_key,
         args_builder=_date_args,
     ),

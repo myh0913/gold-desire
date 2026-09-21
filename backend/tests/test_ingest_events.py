@@ -140,7 +140,7 @@ async def test_scheduler_notifies_on_success(factory, monkeypatch: pytest.Monkey
     outcomes: list[tuple[str, str]] = []  # (capability, status)
 
     async def _fake_run_task(defn, trade_date, **kwargs):
-        status = "failed" if defn.capability == "daily_bars" else "succeeded"
+        status = "failed" if defn.capability == "ladder" else "succeeded"
         outcomes.append((defn.capability, status))
         return IngestResult(
             task=defn.name,
@@ -171,10 +171,11 @@ async def test_scheduler_notifies_on_success(factory, monkeypatch: pytest.Monkey
         now_fn=lambda: evening,
         tick_seconds=1,
     )
-    await sched.run_once(window="postmarket", trade_date=date(2026, 9, 18), now=evening)
+    # 交易时段窗口承载市场情绪 / 涨停池 / 天梯 / 主题等任务的采集
+    await sched.run_once(window="trading_hours", trade_date=date(2026, 9, 18), now=evening)
 
     executed = {cap for cap, status in outcomes}
-    # 只有 succeeded 的能力进入通知（daily_bars 失败被过滤）
-    assert "daily_bars" not in notified
+    # 只有 succeeded 的能力进入通知（ladder 失败被过滤）
+    assert "ladder" not in notified
     assert "market_sentiment" in notified
     assert notified and set(notified) <= executed

@@ -322,7 +322,7 @@ async def test_run_retention_deletes_only_expired(session: AsyncSession) -> None
 
 
 async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) -> None:
-    """快讯/主题 7 天、监管名单仅最新交易日、涨停池 90 天、天梯永久。"""
+    """快讯/主题 7 天、监管名单仅最新交易日、涨停池与天梯按最近 30 个交易日。"""
     now = datetime.now(UTC)
     today = now.date()
 
@@ -410,8 +410,12 @@ async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) ->
     assert report.theme_stocks_deleted == 1
     assert report.monitor_deleted == 1
     assert report.pools_deleted == 1
-    # 天梯永久
-    assert await _row_count(session, LadderRow) == 2
+    # 天梯按「最近 30 个交易日」保留：库中仅 2 个交易日 → 走 45 自然日回退，
+    # 120 天前那条被清掉，10 天前保留。
+    assert report.ladder_deleted == 1
+    assert await _row_count(session, LadderRow) == 1
+    # 情绪表未种数据：路径被覆盖且不报错
+    assert report.sentiment_deleted == 0
     # 监管名单只剩最新交易日
     remaining_monitor = (await session.execute(select(MonitorStock))).scalars().all()
     assert {row.trade_date for row in remaining_monitor} == {today - timedelta(days=1)}

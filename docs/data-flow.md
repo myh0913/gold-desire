@@ -30,25 +30,30 @@ std_* / derived_* 分区表（月分区，幂等覆盖写 upsert）
 | 窗口 | 默认区间 | 内容 |
 | --- | --- | --- |
 | auction | 09:25–09:40 | 09:25 撮合价（opening_match，供策略开盘判定） |
-| intraday | 09:26–10:00 | 盘中轮询（快讯等，按 interval 重复） |
-| intraday_pool | 09:25–15:05 | **涨停池盘中轮询**（10 分钟一轮，`breaks` 跳过午休 11:30–13:00） |
-| tailpan | 14:45–15:00 | 尾盘题材（题材榜 / 题材个股） |
-| postmarket | 17:00–18:00 | 盘后日线 / 天梯 / 情绪 / 交易日历 |
+| intraday | 09:26–10:00 | 保留占位（现无任务使用） |
+| **trading_hours** | **09:25–15:05** | **交易时段全市场轮询**（`breaks` 跳过午休 11:30–13:00）：涨停池 10 分钟 / 连板天梯 10 分钟 / 市场情绪 10 分钟 / 主题机会 30 分钟 |
+| tailpan | 14:45–15:00 | 保留占位（现无任务使用） |
+| postmarket | 17:00–18:00 | 盘后日线（daily_bars）+ 每日维护（保留策略 + 分区）+ 策略阶段 |
 | intraday_day | 09:30–15:00 | 全时段分时（minute_bars，5 分钟一轮，覆盖午休空档） |
 
-`Window.breaks` 声明窗口内需跳过的子区间（闭区间），目前只有 `intraday_pool`
+`Window.breaks` 声明窗口内需跳过的子区间（闭区间），目前只有 `trading_hours`
 用到（跳过午休）。环境变量覆盖只改起止时刻，`breaks` 沿用默认声明。
 
-涨停池（`limit_up_pool`）自 2026-09-21 起改为**盘中轮询 + 整批替换**：
+**四个页面的数据都在 `trading_hours` 窗口内轮询入库（2026-09-21 起）**，
+前端/接口一律**读库**，不直连上游：
 
-- 交易日 09:25–15:05 每 10 分钟拉一次，午休不拉，收盘后（15:00 之后）仍有一轮；
-- 库中只保留**最近一次拉取**的快照——写入走 `LimitUpPoolRepository.replace_pool`
-  （先删当日该 `pool_type` 的旧行再写），「先涨停、后炸板」的票不会残留；
-- 前端/接口一律读库（`/api/pools`），**不直连上游**；采集成功后经
-  `app/ingest/events.py` 失效 `pool` 缓存并广播 `pool` 频道 WS 事件，页面自动刷新；
-- 历史按**最近 30 个交易日**保留（`retention.py`）。
+| 任务 | 节拍 | 写入语义 | 保留期 |
+| --- | --- | --- | --- |
+| `limit_up_pool` 涨停池 | 10 分钟 | **整批替换**（`replace_pool`，先删当日该 `pool_type` 再写） | 最近 30 个交易日 |
+| `ladder` 连板天梯 | 10 分钟 | 幂等 upsert（上游一次返回近 30 日矩阵） | 最近 30 个交易日 |
+| `market_sentiment` 市场情绪（总览） | 10 分钟 | 幂等 upsert（当日一行，取最新点） | 最近 30 个交易日 |
+| `theme_rank` / `theme_stocks` 主题机会 | 30 分钟 | 榜单 + 成分明细分别 upsert | 7 个自然日 |
 
-覆盖方式（`.env`）：`INGEST_WINDOW_AUCTION=09:25-09:40`、
+涨停池额外说明：「先涨停、后炸板」的票不会残留（替换语义）；采集成功后经
+`app/ingest/events.py` 失效对应读缓存并广播 WS 薄事件（`pool` / `ladder` /
+`sentiment` / `themes` 频道），页面自动刷新。
+
+覆盖方式（`.env`）：`INGEST_WINDOW_TRADING_HOURS=09:25-15:05`、
 `INGEST_TICK_SECONDS=15`（调度 tick）、`INGEST_CALENDAR_TTL_SECONDS=432000`
 （日历缓存 5 天）。交易日历取自 `trading_calendar` 能力并缓存（复用
 `pool_snapshot`），上游失败回退「周一至五」并告警，不崩溃。

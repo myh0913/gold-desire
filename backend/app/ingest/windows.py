@@ -6,15 +6,16 @@
 =========== =============== ========================================
 窗口名       区间（HH:MM）    用途
 =========== =============== ========================================
-auction     09:25-09:40     竞价池（涨停池首封）+ 09:25 撮合价
-intraday    09:26-10:00     盘中轮询（快讯等，按 interval 重复）
-intraday_pool 09:25-15:05   涨停池盘中轮询（10 分钟一轮，**跳过午休**）
-tailpan     14:45-15:00     尾盘题材（题材榜 / 题材个股）
-postmarket  17:00-18:00     盘后日线 / 天梯 / 情绪 / 交易日历
+auction     09:25-09:40     09:25 撮合价（opening_match，供策略开盘判定）
+intraday    09:26-10:00     盘中轮询（保留占位；现无任务使用）
+trading_hours 09:25-15:05   交易时段全市场轮询（**跳过午休 11:30-13:00**）：
+                            涨停池 10 分钟 / 主题 30 分钟 / 天梯 10 分钟 / 情绪 10 分钟
+tailpan     14:45-15:00     尾盘题材（保留占位；现无任务使用）
+postmarket  17:00-18:00     盘后日线 + 每日维护 + 策略阶段
 intraday_day 09:30-15:00    全时段分时（minute_bars，5 分钟一轮）
 =========== =============== ========================================
 
-``Window.breaks`` 声明的子区间在窗口内被**跳过**（如 ``intraday_pool`` 跳过
+``Window.breaks`` 声明的子区间在窗口内被**跳过**（如 ``trading_hours`` 跳过
 11:30-13:00 午休）。
 
 可配置性：本模块从环境变量读取覆盖值（``Settings`` 由其他 Task 持有，本 Task
@@ -54,7 +55,7 @@ class Window:
     """采集窗口（闭区间，含起止 ``HH:MM``）。
 
     Attributes:
-        name: 窗口名（auction/intraday/intraday_pool/tailpan/postmarket/intraday_day）。
+        name: 窗口名（auction/intraday/trading_hours/tailpan/postmarket/intraday_day）。
         start: 起始 ``HH:MM``（含）。
         end: 结束 ``HH:MM``（含）。
         breaks: 窗口内需跳过的子区间（闭区间）元组，如午休 ``(("11:30", "13:00"),)``；
@@ -75,8 +76,9 @@ class Window:
 DEFAULT_WINDOWS: tuple[Window, ...] = (
     Window("auction", "09:25", "09:40"),
     Window("intraday", "09:26", "10:00"),
-    # 涨停池盘中轮询：09:25 首封起、15:05 收盘后收口；午休 11:30-13:00 跳过。
-    Window("intraday_pool", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+    # 交易时段全市场轮询：09:25 起、15:05 收盘后收口；午休 11:30-13:00 跳过。
+    # 涨停池 / 主题机会 / 连板天梯 / 市场情绪 四个任务共用本窗口（各自 interval 不同）。
+    Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
     Window("tailpan", "14:45", "15:00"),
     Window("postmarket", "17:00", "18:00"),
     Window("intraday_day", "09:30", "15:00"),

@@ -302,7 +302,7 @@ async def test_scheduler_state_prevents_rerun_and_retries_failures(
         now_fn=lambda: morning,
     )
     first = await sched.run_once(window="auction")
-    # limit_up_pool 已改为盘中轮询（intraday_pool 窗口），竞价窗口只剩 09:25 撮合任务。
+    # limit_up_pool 已改为盘中轮询（trading_hours 窗口），竞价窗口只剩 09:25 撮合任务。
     assert {result.task for result in first} == {"opening_match"}
     assert await sched.run_once(window="auction") == []
     async with factory() as session:
@@ -356,7 +356,7 @@ async def test_calendar_failure_falls_back_to_weekdays(
         now_fn=lambda: datetime(2026, 9, 18, 9, 30, tzinfo=SH),
     )
     results = await sched.run_once(window="auction")
-    # 竞价窗口现只剩撮合任务（limit_up_pool 走 intraday_pool 盘中轮询窗口）
+    # 竞价窗口现只剩撮合任务（limit_up_pool 走 trading_hours 盘中轮询窗口）
     assert {result.task for result in results} == {"opening_match"}
 
 
@@ -373,12 +373,15 @@ async def test_run_once_window_filter(factory: async_sessionmaker[AsyncSession])
         provider_override=provider,
         now_fn=lambda: datetime(2026, 9, 18, 14, 50, tzinfo=SH),
     )
-    results = await sched.run_once(window="tailpan")
-    assert {result.task for result in results} == {"theme_rank", "theme_stocks"}
+    results = await sched.run_once(window="trading_hours")
+    # 交易时段窗口承载四个页面的数据源任务（各自 interval 不同），
+    # 显式指定窗口时不受当前时刻限制。
+    expected = {"limit_up_pool", "theme_rank", "theme_stocks", "ladder", "market_sentiment"}
+    assert {result.task for result in results} == expected
 
     async with factory() as session:
         capabilities = set((await session.execute(select(IngestJob.capability))).scalars().all())
-    assert capabilities == {"theme_rank", "theme_stocks"}
+    assert capabilities == expected
     assert "daily_bars" not in capabilities
 
 
@@ -402,12 +405,16 @@ async def test_interval_task_reruns_after_success_within_window(
     )
 
     first = await sched.run_once()
-    # 09:26:02 同时落在 auction（池+撮合）与全天快讯窗口内
+    # 09:26:02：auction（撮合）+ trading_hours（涨停池/主题/天梯/情绪）+ 全天快讯 + 日历
     assert {result.task for result in first} == {
         "trading_calendar",
         "limit_up_pool",
         "opening_match",
         "newsflash",
+        "theme_rank",
+        "theme_stocks",
+        "ladder",
+        "market_sentiment",
     }
     assert next(r for r in first if r.task == "newsflash").status == "succeeded"
 

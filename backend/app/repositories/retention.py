@@ -8,8 +8,11 @@
 | ``themes`` / ``theme_stocks``（主题） | 7 个自然日 | 对齐旧 quant ``theme_snapshots`` |
 | ``limit_up_pool``（涨停池） | 最近 30 个交易日 | 盘中轮询只留最新快照（覆盖写）， |
 | | | 历史按最近 30 个交易日保留 |
+| ``ladder``（连板天梯） | 最近 30 个交易日 | 上游一次给近 30 个交易日矩阵， |
+| | | 与上游窗口口径一致 |
+| ``market_sentiment``（市场情绪） | 最近 30 个交易日 | 20 日走势图需要历史积累 |
 | ``monitor_stocks``（监管名单） | 仅最新交易日 | 对齐旧 quant「cache + 最新兜底快照」 |
-| ``daily_bars`` / ``advice_reports`` / ``ladder`` | 永久 | 日线为策略基础数据；天梯对齐旧 quant 无清理 |
+| ``daily_bars`` / ``advice_reports`` | 永久 | 日线为策略基础数据 |
 
 由采集侧调度器在盘后窗口调用 :func:`run_retention`；在 SQLite（测试/本地）
 上同样安全可执行。既可由调用方传入会话（DI），也可自行创建会话并提交。
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +32,7 @@ from app.db.session import get_session_factory
 from app.models.market import (
     LadderRow,
     LimitUpPool,
+    MarketSentiment,
     MinuteBar,
     MonitorStock,
     NewsFlash,
@@ -58,14 +63,17 @@ POOL_RETENTION_TRADING_DAYS = 30
 供前端日期下拉与策略样本推导回看。更早的交易日整日清掉。
 """
 
-POOL_RETENTION_FALLBACK_DAYS = 45
-"""涨停池历史交易日不足 :data:`POOL_RETENTION_TRADING_DAYS` 天时的自然日回退上限。
+LADDER_RETENTION_TRADING_DAYS = 30
+"""``ladder``（连板天梯）保留的最近交易日数——与上游 ``window.length=30`` 口径一致。"""
 
-30 个交易日 ≈ 42 个自然日（含周末），取 45 留余量；仅用于「库里还没有 30 个
-交易日」的早期阶段，避免按交易日判定因样本不足而误判。"""
+SENTIMENT_RETENTION_TRADING_DAYS = 30
+"""``market_sentiment`` 保留的最近交易日数——总览 20 日走势图需要历史积累。"""
 
-PERMANENT_TABLES = ("daily_bars", "advice_reports", "ladder")
-"""永久保留、清理任务 SHALL NOT 触碰的表（含连板天梯，对齐旧 quant）。"""
+TRADING_DAY_FALLBACK_DAYS = 45
+"""按交易日计数保留时，库中交易日不足目标天数所回退的自然日上限。"""
+
+PERMANENT_TABLES = ("daily_bars", "advice_reports")
+"""永久保留、清理任务 SHALL NOT 触碰的表（日线为策略基础数据）。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,12 +88,16 @@ class RetentionReport:
         theme_stocks_deleted: 删除的主题成分股行数。
         monitor_deleted: 删除的监管名单行数（仅保留最新交易日）。
         pools_deleted: 删除的涨停池行数。
+        ladder_deleted: 删除的连板天梯行数。
+        sentiment_deleted: 删除的市场情绪行数。
         ran_at: 执行时间（UTC）。
         raw_cutoff: 原始响应保留起点（早于该时间的被删除）。
         minute_bar_cutoff: 分时保留起点交易日（早于该交易日的被删除）。
         news_cutoff: 快讯保留起点时间。
         theme_cutoff: 主题保留起点交易日。
         pool_cutoff: 涨停池保留起点交易日。
+        ladder_cutoff: 连板天梯保留起点交易日。
+        sentiment_cutoff: 市场情绪保留起点交易日。
     """
 
     raw_responses_deleted: int
@@ -95,12 +107,16 @@ class RetentionReport:
     theme_stocks_deleted: int
     monitor_deleted: int
     pools_deleted: int
+    ladder_deleted: int
+    sentiment_deleted: int
     ran_at: datetime
     raw_cutoff: datetime
     minute_bar_cutoff: date
     news_cutoff: datetime
     theme_cutoff: date
     pool_cutoff: date
+    ladder_cutoff: date
+    sentiment_cutoff: date
 
 
 async def run_retention(
@@ -122,24 +138,25 @@ async def run_retention(
         return await _execute(owned, commit=True)
 
 
-async def _pool_retention_cutoff(session: AsyncSession, today: date) -> date:
-    """涨停池保留起点（按**交易日**计数）。
+async def _trading_day_cutoff(
+    session: AsyncSession, column: Any, keep_days: int, today: date
+) -> date:
+    """按**交易日**计数求保留起点（取库中倒序第 ``keep_days`` 个交易日）。
 
-    取库中倒序第 :data:`POOL_RETENTION_TRADING_DAYS` 个交易日作为起点，早于它的
-    整日删除（``trade_date < cutoff`` 即清掉更老的交易日）。
+    早于该起点的整日删除（``trade_date < cutoff``）。库中交易日不足 ``keep_days``
+    时（早期阶段）回退到 :data:`TRADING_DAY_FALLBACK_DAYS` 个自然日，避免因样本
+    不足把仅有的数据误删。
 
-    库中交易日不足该天数时（早期阶段）回退到
-    :data:`POOL_RETENTION_FALLBACK_DAYS` 个自然日，避免因样本不足而误删。
+    Args:
+        session: 数据库会话。
+        column: 目标表的 ``trade_date`` 列（如 ``LimitUpPool.trade_date``）。
+        keep_days: 保留的交易日数。
+        today: 当天日期（回退分支使用）。
     """
-    stmt = (
-        select(LimitUpPool.trade_date)
-        .distinct()
-        .order_by(LimitUpPool.trade_date.desc())
-        .limit(POOL_RETENTION_TRADING_DAYS)
-    )
+    stmt = select(column).distinct().order_by(column.desc()).limit(keep_days)
     dates = list((await session.execute(stmt)).scalars().all())
-    if len(dates) < POOL_RETENTION_TRADING_DAYS:
-        return today - timedelta(days=POOL_RETENTION_FALLBACK_DAYS)
+    if len(dates) < keep_days:
+        return today - timedelta(days=TRADING_DAY_FALLBACK_DAYS)
     return min(dates)
 
 
@@ -151,7 +168,15 @@ async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
     minute_cutoff = (now - timedelta(days=MINUTE_BAR_RETENTION_DAYS)).date()
     news_cutoff = now - timedelta(days=NEWS_RETENTION_DAYS)
     theme_cutoff = today - timedelta(days=THEME_RETENTION_DAYS)
-    pool_cutoff = await _pool_retention_cutoff(session, today)
+    pool_cutoff = await _trading_day_cutoff(
+        session, LimitUpPool.trade_date, POOL_RETENTION_TRADING_DAYS, today
+    )
+    ladder_cutoff = await _trading_day_cutoff(
+        session, LadderRow.trade_date, LADDER_RETENTION_TRADING_DAYS, today
+    )
+    sentiment_cutoff = await _trading_day_cutoff(
+        session, MarketSentiment.trade_date, SENTIMENT_RETENTION_TRADING_DAYS, today
+    )
 
     repo = BaseRepository(session)
     raw_deleted = await RawResponseRepository(session).delete_where(
@@ -166,6 +191,10 @@ async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
         ThemeStock, ThemeStock.trade_date < theme_cutoff
     )
     pools_deleted = await repo.delete_where(LimitUpPool, LimitUpPool.trade_date < pool_cutoff)
+    ladder_deleted = await repo.delete_where(LadderRow, LadderRow.trade_date < ladder_cutoff)
+    sentiment_deleted = await repo.delete_where(
+        MarketSentiment, MarketSentiment.trade_date < sentiment_cutoff
+    )
 
     # 监管名单：仅保留最新交易日（对齐旧 quant「cache + 最新兜底」语义）。
     monitor_deleted = 0
@@ -174,7 +203,6 @@ async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
         monitor_deleted = await repo.delete_where(
             MonitorStock, MonitorStock.trade_date < latest_monitor
         )
-    _ = LadderRow  # 天梯永久保留——显式引用以防误删（无操作）。
 
     if commit:
         await session.commit()
@@ -187,23 +215,29 @@ async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
         theme_stocks_deleted=theme_stocks_deleted,
         monitor_deleted=monitor_deleted,
         pools_deleted=pools_deleted,
+        ladder_deleted=ladder_deleted,
+        sentiment_deleted=sentiment_deleted,
         ran_at=now,
         raw_cutoff=raw_cutoff,
         minute_bar_cutoff=minute_cutoff,
         news_cutoff=news_cutoff,
         theme_cutoff=theme_cutoff,
         pool_cutoff=pool_cutoff,
+        ladder_cutoff=ladder_cutoff,
+        sentiment_cutoff=sentiment_cutoff,
     )
 
 
 __all__ = [
+    "LADDER_RETENTION_TRADING_DAYS",
     "MINUTE_BAR_RETENTION_DAYS",
     "NEWS_RETENTION_DAYS",
     "PERMANENT_TABLES",
-    "POOL_RETENTION_FALLBACK_DAYS",
     "POOL_RETENTION_TRADING_DAYS",
     "RAW_RESPONSE_RETENTION_DAYS",
-    "RetentionReport",
+    "SENTIMENT_RETENTION_TRADING_DAYS",
     "THEME_RETENTION_DAYS",
+    "TRADING_DAY_FALLBACK_DAYS",
+    "RetentionReport",
     "run_retention",
 ]

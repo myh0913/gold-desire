@@ -2,7 +2,7 @@
 
 覆盖 2026-09-21 的改造（对齐 quant 的「盘中实时刷新 + 只留最新快照」口径）：
 
-1. ``intraday_pool`` 窗口 09:25-15:05，且**跳过午休** 11:30-13:00；
+1. ``trading_hours`` 窗口 09:25-15:05，且**跳过午休** 11:30-13:00；
 2. ``limit_up_pool`` 任务改为每 10 分钟一轮（``interval_seconds=600``）、
    走**整批替换**写入器（``target="limit_up_pool_replace"``）；
 3. 替换语义：先涨停后炸板的票不残留、其他池型不受影响、空结果不清库；
@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from itertools import pairwise
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
@@ -30,14 +31,16 @@ from app.db.base import Base
 from app.ingest.scheduler import IngestScheduler
 from app.ingest.tasks import WRITERS, get_task
 from app.ingest.windows import Window, in_window, load_windows, window_by_name
-from app.models.market import LimitUpPool
+from app.models.market import LadderRow, LimitUpPool, MarketSentiment
 from app.repositories import LimitUpPoolRepository
 from app.repositories.retention import (
-    POOL_RETENTION_FALLBACK_DAYS,
+    LADDER_RETENTION_TRADING_DAYS,
     POOL_RETENTION_TRADING_DAYS,
+    SENTIMENT_RETENTION_TRADING_DAYS,
+    TRADING_DAY_FALLBACK_DAYS,
     run_retention,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -125,9 +128,9 @@ def _pool_row(
 # ============================================================ 1. 窗口与午休
 
 
-def test_intraday_pool_window_is_0925_to_1505() -> None:
+def test_trading_hours_window_is_0925_to_1505() -> None:
     """新窗口边界：09:25 起、15:05 收口，两侧各差一分钟即失效。"""
-    window = window_by_name(load_windows(), "intraday_pool")
+    window = window_by_name(load_windows(), "trading_hours")
     assert (window.start, window.end) == ("09:25", "15:05")
     assert in_window(_at(9, 24), window) is False
     assert in_window(_at(9, 25), window) is True
@@ -146,9 +149,9 @@ def test_intraday_pool_window_is_0925_to_1505() -> None:
         ("13:01", True),
     ],
 )
-def test_intraday_pool_window_skips_lunch_break(hm: str, expected: bool) -> None:
+def test_trading_hours_window_skips_lunch_break(hm: str, expected: bool) -> None:
     """午休 11:30-13:00 整段跳过（含 11:30 与 13:00 两个端点）。"""
-    window = window_by_name(load_windows(), "intraday_pool")
+    window = window_by_name(load_windows(), "trading_hours")
     hour, minute = (int(part) for part in hm.split(":"))
     assert in_window(_at(hour, minute), window) is expected
 
@@ -166,8 +169,8 @@ def test_other_windows_keep_continuous_semantics() -> None:
 
 def test_env_override_preserves_breaks(monkeypatch: pytest.MonkeyPatch) -> None:
     """环境变量只覆盖起止时刻，午休 ``breaks`` 沿用默认声明。"""
-    monkeypatch.setenv("INGEST_WINDOW_INTRADAY_POOL", "09:20-15:10")
-    window = window_by_name(load_windows(), "intraday_pool")
+    monkeypatch.setenv("INGEST_WINDOW_TRADING_HOURS", "09:20-15:10")
+    window = window_by_name(load_windows(), "trading_hours")
     assert (window.start, window.end) == ("09:20", "15:10")
     assert window.breaks == (("11:30", "13:00"),)
 
@@ -180,10 +183,31 @@ def test_limit_up_pool_task_polls_every_10_minutes_with_replace_writer() -> None
     defn = get_task("limit_up_pool")
     assert defn.interval_seconds == 600, "应为每 10 分钟一轮"
     assert defn.window is not None
-    assert defn.window.name == "intraday_pool"
+    assert defn.window.name == "trading_hours"
     assert defn.target == "limit_up_pool_replace"
     # 替换写入器与幂等追加写入器是两个不同的实现
     assert WRITERS[defn.target] is not WRITERS["limit_up_pool"]
+
+
+def test_trading_hours_carries_all_four_pages() -> None:
+    """交易时段窗口承载 4 个页面的数据源任务，节拍与需求一致。
+
+    需求（2026-09-21）：与涨停池同一时间段（09:25-15:05，午休跳过）内，
+    主题机会每半小时一次，连板天梯与总览（情绪）每 10 分钟一次。
+    """
+    expected = {
+        "limit_up_pool": 600,  # 涨停池：10 分钟
+        "ladder": 600,  # 连板天梯：10 分钟
+        "market_sentiment": 600,  # 总览（市场情绪）：10 分钟
+        "theme_rank": 1800,  # 主题机会：30 分钟
+        "theme_stocks": 1800,  # 主题成分股：与榜单同节拍
+    }
+    for name, interval in expected.items():
+        defn = get_task(name)
+        assert defn.window is not None, name
+        assert defn.window.name == "trading_hours", name
+        assert defn.interval_seconds == interval, name
+        assert defn.enabled is True, name
 
 
 # ============================================================ 3. 替换语义
@@ -371,6 +395,67 @@ async def test_pool_retention_keeps_last_30_trading_days(session: AsyncSession) 
     assert sorted(remaining) == days[5:]
 
 
+async def test_ladder_retention_keeps_last_30_trading_days(session: AsyncSession) -> None:
+    """连板天梯历史只留最近 30 个交易日（与上游 window.length=30 口径一致）。"""
+    days = [date(2026, 6, 1) + timedelta(days=offset) for offset in range(35)]
+    for day in days:
+        session.add(
+            LadderRow(
+                trade_date=day,
+                code="001317.SZ",
+                name="三羊马",
+                continue_days=2,
+                first_seal_time=None,
+                source="test",
+            )
+        )
+    await session.commit()
+
+    before = int(await session.scalar(select(func.count()).select_from(LadderRow)) or 0)
+    assert before == 35
+
+    report = await run_retention(session=session)
+    await session.commit()
+
+    assert LADDER_RETENTION_TRADING_DAYS == 30
+    assert report.ladder_deleted == 5
+    assert report.ladder_cutoff == days[5]
+    remaining = list(
+        (await session.execute(select(LadderRow.trade_date).distinct())).scalars().all()
+    )
+    assert sorted(remaining) == days[5:]
+
+
+async def test_sentiment_retention_keeps_last_30_trading_days(session: AsyncSession) -> None:
+    """市场情绪历史只留最近 30 个交易日（总览 20 日走势需要积累）。"""
+    days = [date(2026, 6, 1) + timedelta(days=offset) for offset in range(35)]
+    for day in days:
+        session.add(
+            MarketSentiment(
+                trade_date=day,
+                temperature=Decimal("50"),
+                stage=None,
+                limit_up_count=1,
+                limit_down_count=0,
+                broken_board_count=0,
+                broken_rate=Decimal("0"),
+                up_count=1,
+                down_count=0,
+                max_continue_days=1,
+                premium_rate=Decimal("0"),
+                source="test",
+            )
+        )
+    await session.commit()
+
+    report = await run_retention(session=session)
+    await session.commit()
+
+    assert SENTIMENT_RETENTION_TRADING_DAYS == 30
+    assert report.sentiment_deleted == 5
+    assert report.sentiment_cutoff == days[5]
+
+
 async def test_pool_retention_falls_back_when_history_insufficient(
     session: AsyncSession,
 ) -> None:
@@ -389,6 +474,6 @@ async def test_pool_retention_falls_back_when_history_insufficient(
     await session.commit()
 
     assert report.pools_deleted == 1, "仅 120 天前那条应被清掉"
-    assert report.pool_cutoff == today - timedelta(days=POOL_RETENTION_FALLBACK_DAYS)
+    assert report.pool_cutoff == today - timedelta(days=TRADING_DAY_FALLBACK_DAYS)
     codes = sorted((await session.execute(select(LimitUpPool.code))).scalars().all())
     assert codes == ["600002.SH"], "10 天前的数据应保留"

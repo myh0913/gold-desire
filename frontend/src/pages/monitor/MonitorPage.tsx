@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
+import { StaleNotice } from '@/components/common/StaleNotice';
 import { marketApi } from '@/lib/api';
 import type { MonitorStockOut } from '@/types/market';
 
@@ -73,6 +74,12 @@ export default function MonitorPage() {
           </Select>
         </div>
       </div>
+
+      <StaleNotice
+        stale={monitorQuery.data?.stale}
+        dataDate={monitorQuery.data?.data_date}
+        label="监管名单"
+      />
 
       <DataTable
         columns={columns}

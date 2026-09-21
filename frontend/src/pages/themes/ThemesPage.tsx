@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
+import { StaleNotice } from '@/components/common/StaleNotice';
+import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { marketApi } from '@/lib/api';
 import { formatPercentPlain, priceToneClass } from '@/lib/format';
 import type { ThemeOut, ThemeStockOut } from '@/types/market';
@@ -86,6 +88,7 @@ const stockColumns: DataTableColumn<ThemeStockOut>[] = [
 ];
 
 export default function ThemesPage() {
+  useChannelRefresh(['themes'], ['market', 'themes']);
   const [date, setDate] = useState('');
   const [selected, setSelected] = useState<ThemeOut | null>(null);
 
@@ -133,6 +136,12 @@ export default function ThemesPage() {
           </Select>
         </div>
       </div>
+
+      <StaleNotice
+        stale={themesQuery.data?.stale}
+        dataDate={themesQuery.data?.data_date}
+        label="主题"
+      />
 
       <DataTable
         columns={themeColumns(setSelected)}

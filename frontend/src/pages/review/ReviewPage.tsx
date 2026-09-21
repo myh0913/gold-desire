@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateViews';
+import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { reportApi } from '@/lib/api';
 import { formatAmount, formatNumber, formatPct, formatPercentPlain, priceToneClass } from '@/lib/format';
 import type { ReviewAdviceOutcomeOut, ReviewPoolTopOut, ReviewResponse } from '@/types/review';
@@ -181,6 +182,7 @@ const adviceColumns: DataTableColumn<ReviewAdviceOutcomeOut>[] = [
 ];
 
 export default function ReviewPage() {
+  useChannelRefresh(['advice'], ['report', 'review']);
   const [date, setDate] = useState('');
   const datesQuery = useQuery({
     queryKey: ['report', 'review', 'dates'],

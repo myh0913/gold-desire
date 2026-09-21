@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateViews';
+import { StaleNotice } from '@/components/common/StaleNotice';
 import { reportApi } from '@/lib/api';
 import { formatPercentPlain } from '@/lib/format';
 import { getWsClient } from '@/lib/ws';
@@ -178,6 +179,14 @@ export default function AdvicePage() {
           </Button>
         </div>
       </div>
+
+      {adviceQuery.data?.stale && (
+        <StaleNotice
+          stale={adviceQuery.data.stale}
+          dataDate={adviceQuery.data.data_date}
+          label="建议数据"
+        />
+      )}
 
       {adviceQuery.isLoading && <LoadingState className="min-h-48" />}
       {adviceQuery.isError && (

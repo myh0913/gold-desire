@@ -14,7 +14,14 @@
 export type WsStatus = 'connecting' | 'open' | 'closed';
 
 /** 业务频道名。 */
-export type WsChannel = 'advice' | 'ingest' | 'alert' | 'sentiment' | 'pool';
+export type WsChannel =
+  | 'advice'
+  | 'ingest'
+  | 'alert'
+  | 'sentiment'
+  | 'pool'
+  | 'newsflash'
+  | 'themes';
 
 /** 服务端控制消息。 */
 export type WsControlMessage =

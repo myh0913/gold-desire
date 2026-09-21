@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
+import { StaleNotice } from '@/components/common/StaleNotice';
+import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { marketApi } from '@/lib/api';
 import { fmtDateTime } from '@/lib/time';
 import type { NewsFlashOut } from '@/types/market';
@@ -63,6 +65,7 @@ const columns: DataTableColumn<NewsFlashOut>[] = [
 ];
 
 export default function NewsflashPage() {
+  useChannelRefresh(['newsflash'], ['market', 'newsflash']);
   const [level, setLevel] = useState('');
   const [keyword, setKeyword] = useState('');
   const [query, setQuery] = useState('');
@@ -120,6 +123,12 @@ export default function NewsflashPage() {
           />
         </div>
       </div>
+
+      <StaleNotice
+        stale={newsQuery.data?.stale}
+        dataDate={newsQuery.data?.data_date}
+        label="快讯"
+      />
 
       <DataTable
         columns={columns}

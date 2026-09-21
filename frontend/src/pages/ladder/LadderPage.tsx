@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
+import { StaleNotice } from '@/components/common/StaleNotice';
+import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { marketApi } from '@/lib/api';
 import type { LadderRowOut } from '@/types/market';
 
@@ -35,6 +37,7 @@ function isoDaysAgo(days: number): string {
 }
 
 export default function LadderPage() {
+  useChannelRefresh(['pool'], ['market', 'ladder']);
   const datesQuery = useQuery({
     queryKey: ['market', 'ladder', 'dates'],
     queryFn: ({ signal }) => marketApi.ladderDates(signal),
@@ -115,6 +118,12 @@ export default function LadderPage() {
           实际区间：{effectiveStart} ~ {effectiveEnd}
         </p>
       </div>
+
+      <StaleNotice
+        stale={ladderQuery.data?.stale}
+        dataDate={ladderQuery.data?.data_date}
+        label="连板天梯"
+      />
 
       <DataTable
         columns={columns}

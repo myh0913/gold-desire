@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
+import { StaleNotice } from '@/components/common/StaleNotice';
+import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { marketApi } from '@/lib/api';
 import { formatAmount, formatPercentPlain } from '@/lib/format';
 import type { PoolOut } from '@/types/market';
@@ -61,6 +63,7 @@ const columns: DataTableColumn<PoolOut>[] = [
 ];
 
 export default function PoolsPage() {
+  useChannelRefresh(['pool'], ['market', 'pools']);
   const [date, setDate] = useState('');
   const poolsQuery = useQuery({
     queryKey: ['market', 'pools', date],
@@ -99,6 +102,12 @@ export default function PoolsPage() {
           </Select>
         </div>
       </div>
+
+      <StaleNotice
+        stale={poolsQuery.data?.stale}
+        dataDate={poolsQuery.data?.data_date}
+        label="涨停池"
+      />
 
       {poolTypes.length > 0 && (
         <Tabs value={effective ?? 'limit_up'} onValueChange={setActive}>

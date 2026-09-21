@@ -345,6 +345,11 @@ class IngestScheduler:
                 self._last_attempt[(defn.name, target_date)] = moment
                 await _state_mark(repos, defn.name, target_date, result.status, error=result.error)
                 await session.commit()
+                if result.status == "succeeded":
+                    # 写后失效 + WS 薄事件（尽力而为，失败不影响采集）。
+                    from app.ingest.events import notify_ingest_completed
+
+                    await notify_ingest_completed(result, target_date)
                 executed.append(result)
 
             await self._maybe_maintenance(repos, session, target_date, moment, window)

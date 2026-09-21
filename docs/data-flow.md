@@ -95,12 +95,21 @@ std_* / derived_* 分区表（月分区，幂等覆盖写 upsert）
   用户拒绝握手（关闭码 4401）。
 - 协议：服务端 30s `heartbeat`；客户端 `ping` / `subscribe` / `unsubscribe`；
   推送 `{"type":<channel>,"channel":<channel>,"data":{...},"ts":<ms>}`。
-- 频道：`sentiment`（情绪）、`pool`（涨停池/采集完成/策略建池）、`advice`（建议产出）、
-  `alert`（**仅 admin** 运维告警）。
-- 发布者：`alert` 由手动采集完成通知（`ingest_service`）；`pool` / `advice` 由盘后
-  策略阶段钩子（`ingest/strategy_hooks.py`）。**跨进程推送**经 Redis pub/sub 总线
-  （`core/ws_bus.py`）：worker 进程发布 → api 进程订阅中转到本进程连接；无 Redis
-  （单进程/内存缓存）时自动退化为进程内直发。
+- 频道：`sentiment`（情绪）、`pool`（涨停池/天梯）、`advice`（建议产出）、
+  `newsflash`（快讯）、`themes`（主题）、`alert`（**仅 admin** 运维告警）。
+- **发布者**：
+  - `alert`：手动采集完成/失败通知（`ingest_service`）；
+  - 行情类频道（`sentiment`/`pool`/`newsflash`/`themes`）：**调度器每个采集任务
+    成功后**经 `ingest/events.py` 广播**薄事件**（只含 source/trade_date/rows，
+    不带全量 payload），并按能力映射失效对应读缓存前缀（写后失效跨进程生效，
+    无 Redis 时由 api 侧 L1 短 TTL 兜底）；
+  - `pool` / `advice` 另由盘后策略阶段钩子（`ingest/strategy_hooks.py`）发布。
+- **跨进程推送**经 Redis pub/sub 总线（`core/ws_bus.py`）：worker 进程发布 →
+  api 进程订阅中转到本进程连接；无 Redis（单进程/内存缓存）时自动退化为
+  进程内直发。
+- 前端消费模型：**事件失效重取**（与旧 quant 的 30s 全量推送相反）——页面经
+  `hooks/useChannelRefresh` 订阅频道，收到薄事件即失效对应查询键，由 REST
+  按需重取（复用请求层缓存与鉴权，带宽与数据量无关）。
 - 前端客户端封装重连退避 + 心跳 + 半开检测，断线重连后按需经 REST 补数据。
 
 ## 5. 前端消费（frontend/）

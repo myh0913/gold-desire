@@ -257,5 +257,55 @@ async def test_ws_non_admin_blocked_from_admin_channel(
     await broadcast("advice", {"date": "2026-06-03"})
     message = await client.recv()
     assert message["type"] == "advice"
-
     await client.disconnect()
+
+
+# ============================================================ WS 总线启动（回归）
+
+
+async def test_ws_bus_subscriber_starts_with_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """回归：Starlette 1.x 下 ``router.on_startup`` 不执行，订阅必须挂进 lifespan。
+
+    历史缺陷：``attach_ws`` 曾把订阅启动 append 到 ``on_startup``——指定
+    ``lifespan=`` 后该列表是死代码，api 进程从未订阅 Redis ``ws:*``，
+    跨进程事件全部丢失（前端连上 WS 也收不到任何推送）。
+    """
+    from app.core import ws_bus
+    from app.main import create_app
+
+    calls: list[str] = []
+
+    async def _fake_subscribe() -> None:
+        calls.append("subscribe")
+
+    monkeypatch.setattr(ws_bus, "subscribe_ws_bus", _fake_subscribe)
+
+    app = create_app()
+    # create_app 内部 attach_ws 已包装 lifespan：进入即启动订阅任务
+    async with app.router.lifespan_context(app):
+        assert calls == ["subscribe"]
+    # 退出 lifespan 不抛错（订阅任务被取消）
+    assert calls == ["subscribe"]
+
+
+async def test_attach_ws_idempotent_per_app() -> None:
+    """同一 app 重复 attach_ws 不叠加 lifespan 包装（订阅任务只启动一个）。"""
+    from app.core import ws_bus
+    from app.main import create_app
+
+    calls: list[str] = []
+
+    async def _fake_subscribe() -> None:
+        calls.append("subscribe")
+
+    original_subscribe = ws_bus.subscribe_ws_bus
+    ws_bus.subscribe_ws_bus = _fake_subscribe
+    try:
+        app = create_app()
+        attach_ws(app)  # 二次 attach：应命中幂等保护
+        async with app.router.lifespan_context(app):
+            assert calls == ["subscribe"]
+    finally:
+        ws_bus.subscribe_ws_bus = original_subscribe

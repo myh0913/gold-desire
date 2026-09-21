@@ -306,21 +306,40 @@ async def ws_endpoint(
         manager.unregister(conn_id)
 
 
-async def _start_ws_bus() -> None:
-    """启动跨进程 WS 总线：注入本地广播器并订阅 Redis ``ws:*``（api 进程侧）。"""
-    from app.core import ws_bus
-
-    ws_bus.set_local_broadcaster(_manager.broadcast)
-    import asyncio
-
-    asyncio.create_task(ws_bus.subscribe_ws_bus())
-
-
 def attach_ws(app: FastAPI) -> None:
     """把 ``WS /ws`` 挂到应用上（``main.py`` 需调用一次）。
 
-    同时注册启动钩子接入 :mod:`app.core.ws_bus`（worker 进程发布的跨进程事件
-    经 Redis 中转到本进程连接；无 Redis 时发布端直接走本地广播）。
+    同时接入 :mod:`app.core.ws_bus`（worker 进程发布的跨进程事件经 Redis
+    中转到本进程连接；无 Redis 时发布端直接走本地广播）。
+
+    **启动时机**：Starlette 1.x 移除了 ``add_event_handler`` 且不再执行
+    ``router.on_startup``（指定 ``lifespan=`` 后该列表是死代码），因此这里
+    用**包装 lifespan** 的方式保证订阅任务在应用启动时真正跑起来——
+    在原始 lifespan 外面套一层，进入时启动 ``subscribe_ws_bus`` 任务，
+    退出时取消。
     """
+    from contextlib import asynccontextmanager
+
+    from app.core import ws_bus
+
+    ws_bus.set_local_broadcaster(_manager.broadcast)
     app.add_api_websocket_route("/ws", ws_endpoint)
-    app.router.on_startup.append(_start_ws_bus)
+
+    if getattr(app.router.lifespan_context, "_ws_bus_wrapped", False):
+        return  # 已包装（重复 attach 幂等）
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def _lifespan_with_ws_bus(router: FastAPI):
+        import asyncio
+
+        subscriber = asyncio.create_task(ws_bus.subscribe_ws_bus())
+        logger.info("ws_bus_subscriber_started")
+        try:
+            async with original(router):
+                yield
+        finally:
+            subscriber.cancel()
+
+    _lifespan_with_ws_bus._ws_bus_wrapped = True  # type: ignore[attr-defined]
+    app.router.lifespan_context = _lifespan_with_ws_bus

@@ -34,7 +34,10 @@ __all__ = [
 # 声明顺序时始终取 fake，绝不误触上游网络。
 REAL_CAPABILITY_PROVIDERS: dict[str, list[str]] = {
     "daily_bars": ["hithink", "fake"],
-    "limit_up_pool": ["hithink", "xuangutong", "fake"],
+    # 涨停池首选选股通：该端点字段最全（现价/涨幅/量比/流通市值/涨停原因+关联板块/
+    # 封板时间线/封单比），hithink 同能力字段较少（无涨停原因、现价、涨幅），
+    # 保留为备源以便选股通故障时自动降级。
+    "limit_up_pool": ["xuangutong", "hithink", "fake"],
     "ladder": ["hithink", "fake"],
     "trading_calendar": ["hithink", "fake"],
     "market_sentiment": ["xuangutong", "fake"],

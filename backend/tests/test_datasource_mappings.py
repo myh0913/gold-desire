@@ -340,11 +340,13 @@ def test_both_providers_registered_and_ordered() -> None:
     for capability in XUANGUTONG_CAPABILITIES:
         assert "xuangutong" in resolve_order(capability), capability
 
-    # 主源判定（对齐参考项目 CAPABILITY_PROVIDERS / DATA_CONTRACT.md）
+    # 主源判定（对齐参考项目 CAPABILITY_PROVIDERS / DATA_CONTRACT.md，
+    # 其中 limit_up_pool 因需 quant 同款的现价/涨幅/涨停原因等字段而首选选股通）
     assert resolve_order("daily_bars")[0] == "hithink"
     assert resolve_order("ladder")[0] == "hithink"
     assert resolve_order("trading_calendar")[0] == "hithink"
-    assert resolve_order("limit_up_pool")[0] == "hithink"
+    assert resolve_order("limit_up_pool")[0] == "xuangutong"
+    assert resolve_order("limit_up_pool")[1] == "hithink", "hithink 保留为备源"
     assert resolve_order("market_sentiment")[0] == "xuangutong"
     assert resolve_order("newsflash")[0] == "xuangutong"
 

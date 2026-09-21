@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -99,7 +100,7 @@ class MinuteBarsResponse(MarketMeta):
 
 
 class LimitUpPoolOut(BaseModel):
-    """涨停池成分（``turnover_rate`` 小数口径）。"""
+    """涨停池成分（``turnover_rate`` / ``change_pct`` / ``seal_ratio`` 小数口径）。"""
 
     model_config = _ORM
 
@@ -113,6 +114,14 @@ class LimitUpPoolOut(BaseModel):
     turnover_rate: float | None = None
     amount_yuan: float | None = None
     market_cap_yuan: float | None = None
+    price: float | None = None
+    change_pct: float | None = None
+    volume_bias_ratio: float | None = None
+    free_cap_yuan: float | None = None
+    seal_ratio: float | None = None
+    reason: str | None = None
+    plates: list[dict[str, Any]] | None = None
+    timeline: list[dict[str, Any]] | None = None
     pool_type: str
 
 

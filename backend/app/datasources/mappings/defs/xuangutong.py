@@ -59,11 +59,18 @@ _LIMIT_UP_STOCK = CapabilityMapping(
     source_id="xuangutong",
     capability="limit_up_pool",
     record_path="data",
-    notes="涨停池：symbol(.SS) / stock_chi_name / limit_up_days / break_limit_up_times / "
-    "turnover_ratio(小数) / total_capital(元) / first_limit_up(秒)；"
-    "封单金额与成交额该端点不提供（留空）",
-    static={"pool_type": "limit_up"},
+    notes="涨停池（7 种池型由取数参数 pool_name 决定，见 tasks.POOL_TYPES）："
+    "symbol(.SS) / stock_chi_name / limit_up_days / break_limit_up_times / "
+    "turnover_ratio(小数) / total_capital(总市值) / non_restricted_capital(流通市值) / "
+    "first_limit_up(秒) / price(现价) / change_percent(涨幅,小数) / volume_bias_ratio(量比) / "
+    "buy_lock_volume_ratio(封单比) / surge_reason{stock_reason, related_plates} / "
+    "limit_timeline.items(封板时间线)；封单金额与成交额该端点不提供（留空）",
     fields=(
+        # pool_type 取自取数参数：一个任务对 7 种池型逐轮取数，各轮落各自池型。
+        # 缺省 limit_up 与 provider 的 URL 默认值保持一致（未显式传池型时视作涨停池）。
+        FieldMap(
+            "pool_type", None, "to_str", context="args.pool_name", default="limit_up", required=False
+        ),
         FieldMap("code", "symbol", "normalize_code"),
         FieldMap("name", "stock_chi_name", "to_str"),
         FieldMap("continue_days", "limit_up_days", "to_int"),
@@ -73,6 +80,14 @@ _LIMIT_UP_STOCK = CapabilityMapping(
         FieldMap("turnover_rate", "turnover_ratio", "ratio_passthrough"),
         FieldMap("amount_yuan", "amount", "to_float", required=False),
         FieldMap("market_cap_yuan", "total_capital", "to_float"),
+        FieldMap("price", "price", "to_float", required=False),
+        FieldMap("change_pct", "change_percent", "ratio_passthrough", required=False),
+        FieldMap("volume_bias_ratio", "volume_bias_ratio", "to_float", required=False),
+        FieldMap("free_cap_yuan", "non_restricted_capital", "to_float", required=False),
+        FieldMap("seal_ratio", "buy_lock_volume_ratio", "to_float", required=False),
+        FieldMap("reason", "surge_reason.stock_reason", "to_str", required=False),
+        FieldMap("plates", "surge_reason.related_plates", "identity", required=False),
+        FieldMap("timeline", "limit_timeline.items", "identity", required=False),
     ),
 )
 

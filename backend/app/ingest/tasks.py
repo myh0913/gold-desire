@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.core.timeutil import date_ms, day_end_ms
@@ -250,12 +251,43 @@ async def _date_args(trade_date: date, repos: Repositories) -> list[dict[str, An
     return [{"date": trade_date.isoformat()}]
 
 
-async def _limit_up_pool_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
-    """涨停池取数参数：同时给出 ``date``（选股通）与 ``date_ms``（同花顺）。
+#: 涨停池 7 种池型（上游 ``pool_name``）；**顺序即前端 Tab 顺序**。
+POOL_TYPES: tuple[str, ...] = (
+    "limit_up",  # 涨停池
+    "limit_up_broken",  # 炸板池
+    "yesterday_limit_up",  # 昨涨停
+    "super_stock",  # 强势股
+    "limit_down",  # 跌停池
+    "new_stock",  # 新股
+    "nearly_new",  # 次新
+)
 
-    两个键各自的源只取自己认识的那个，多余键被忽略；锁定历史日可避免拿到「当前」池。
+
+async def _limit_up_pool_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """涨停池取数参数：**每种池型一组**（共 7 组，逐轮取数、逐池型替换写入）。
+
+    参数口径（对齐参考实现 quant）：
+
+    - ``pool_name``：池型，选股通按此返回对应池；
+    - ``date``：**仅当目标交易日不是「今天」时**才传（历史回补路径）。当前交易日的
+      轮询**不传 date**——上游带 date 会走「归档模式」，``nearly_new`` / ``new_stock``
+      的归档口径与实时不一致（实测 89→23、2→1），而参考实现同样不传 date；
+    - ``date_ms``：同花顺所需（该源只有涨停池，不支持池型）。
+
+    注：hithink 不支持池型（只有涨停池）。若选股通故障回退到 hithink，7 轮都会写
+    ``pool_type='limit_up'``（幂等覆盖，最终 state 仍是正确的涨停池，其余 6 个池型
+    保持为空）——降级可接受，不报错。
     """
-    return [{"date": trade_date.isoformat(), "date_ms": date_ms(trade_date)}]
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    historical = trade_date != today
+    return [
+        {
+            "pool_name": pool_type,
+            "date_ms": date_ms(trade_date),
+            **({"date": trade_date.isoformat()} if historical else {}),
+        }
+        for pool_type in POOL_TYPES
+    ]
 
 
 #: 日线标的回看窗口（自然日）：从近期涨停池/天梯推导「策略相关票」。

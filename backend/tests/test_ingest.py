@@ -25,7 +25,7 @@ from app.db.base import Base
 from app.ingest.pipeline import run_many, run_task
 from app.ingest.replay import replay_scope
 from app.ingest.scheduler import IngestScheduler, is_trading_day
-from app.ingest.tasks import get_task
+from app.ingest.tasks import POOL_TYPES, get_task
 from app.models.derived import IngestJob
 from app.models.market import LimitUpPool
 from app.models.raw import RawResponse
@@ -198,7 +198,10 @@ async def test_rerun_same_task_does_not_duplicate_rows(
 
 
 async def test_raw_response_is_archived(factory: async_sessionmaker[AsyncSession]) -> None:
-    """一次运行写入一条 RawResponse（source/capability/sha256）。"""
+    """每次取数各留档一条 RawResponse（source/capability/sha256）。
+
+    涨停池任务现对 7 种池型**逐轮取数**（``POOL_TYPES``），故一次运行留档 7 条。
+    """
     provider = RecordingProvider()
     async with factory() as session:
         repos = Repositories.build(session)
@@ -214,12 +217,15 @@ async def test_raw_response_is_archived(factory: async_sessionmaker[AsyncSession
     async with factory() as session:
         raws = list((await session.execute(select(RawResponse))).scalars().all())
 
-    assert len(raws) == 1
-    assert raws[0].source == "fake"
-    assert raws[0].capability == "limit_up_pool"
-    assert raws[0].trade_date == TRADE_DATE
-    assert len(raws[0].sha256) == 64
+    assert len(raws) == len(POOL_TYPES) == 7, "7 种池型各留档一条"
+    assert {raw.source for raw in raws} == {"fake"}
+    assert {raw.capability for raw in raws} == {"limit_up_pool"}
+    assert {raw.trade_date for raw in raws} == {TRADE_DATE}
+    assert all(len(raw.sha256) == 64 for raw in raws)
     assert "items" in raws[0].payload["data"]
+
+    # 逐轮取数：每轮的取数参数不同（池型），故留档的 args_hash 应互不相同
+    assert len({raw.args_hash for raw in raws}) == len(POOL_TYPES)
 
 
 # ============================================================ 3. 失败不吞错 + 隔离

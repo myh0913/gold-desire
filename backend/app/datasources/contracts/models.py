@@ -15,7 +15,7 @@ docstring 显式声明单位，便于跨源对账与因子计算。
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -34,7 +34,16 @@ __all__ = [
     "TradingDayContract",
 ]
 
-PoolType = Literal["limit_up", "limit_down", "broken"]
+#: 池类型：与上游 ``pool_name`` 口径一致（7 种）。
+PoolType = Literal[
+    "limit_up",  # 涨停池
+    "limit_up_broken",  # 炸板池
+    "yesterday_limit_up",  # 昨涨停
+    "super_stock",  # 强势股
+    "limit_down",  # 跌停池
+    "new_stock",  # 新股
+    "nearly_new",  # 次新
+]
 
 
 class DailyBarContract(ContractModel):
@@ -55,13 +64,17 @@ class LimitUpStockContract(ContractModel):
     """涨停/跌停/炸板池条目契约。
 
     可选字段遵循「能算的算、算不出的留空」：不同源提供的列不一致
-    （如 hithink 无换手率/成交额/市值，xuangutong 无封单金额），
+    （如 hithink 无换手率/成交额/市值/涨停原因，xuangutong 无封单金额），
     缺失一律写 ``None``，SHALL NOT 用 0 顶替。
     """
 
     code: str = Field(description="证券代码，标准形如 600519.SH")
     name: str = Field(description="证券简称")
-    continue_days: int = Field(ge=1, description="连板天数（自然连板数，≥1）")
+    continue_days: int = Field(
+        ge=0,
+        description="连板天数，``0`` 表示当日未处于连板状态"
+        "（炸板池 / 跌停池 / 新股 / 次新 / 非连板的强势股均可能为 0）",
+    )
     limit_up_time: str | None = Field(
         default=None, description="首次封板时间，格式 HH:MM；缺失为 None"
     )
@@ -80,7 +93,32 @@ class LimitUpStockContract(ContractModel):
     market_cap_yuan: float | None = Field(
         default=None, ge=0, description="总市值，单位：元；源缺失为 None"
     )
-    pool_type: PoolType = Field(description="池类型：limit_up / limit_down / broken")
+    price: float | None = Field(default=None, ge=0, description="现价，单位：元；源缺失为 None")
+    change_pct: float | None = Field(
+        default=None, description="涨跌幅，单位：小数（0.1001=+10.01%）；源缺失为 None"
+    )
+    volume_bias_ratio: float | None = Field(
+        default=None, ge=0, description="量比；源缺失为 None"
+    )
+    free_cap_yuan: float | None = Field(
+        default=None, ge=0, description="流通市值，单位：元；源缺失为 None"
+    )
+    seal_ratio: float | None = Field(
+        default=None, ge=0, description="封单比（买盘封单量/流通股，小数）；源缺失为 None"
+    )
+    reason: str | None = Field(
+        default=None, description="涨停原因（上游口语化说明）；源缺失为 None"
+    )
+    plates: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="关联板块 ``[{\"plate_id\": int, \"plate_name\": str}]``；源缺失为 None",
+    )
+    timeline: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="封板时间线 ``[{\"timestamp\": int, \"status\": int}]``"
+        "（status: 1 封涨停 / 2 炸板 / 3 封跌停 / 4 开跌停）；源缺失为 None",
+    )
+    pool_type: PoolType = Field(description="池类型：与上游 pool_name 口径一致的 7 种")
 
 
 class LadderRowContract(ContractModel):

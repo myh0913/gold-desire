@@ -120,11 +120,12 @@ class MinuteBar(SourceMixin, Base):
 
 
 class LimitUpPool(SourceMixin, Base):
-    """涨停池（含跌停/炸板/昨涨停/强势/新股等池型，由 ``pool_type`` 区分）。
+    """涨停池（含跌停/炸板/昨涨停/强势/新股/次新等池型，由 ``pool_type`` 区分）。
 
-    单位：``*_yuan`` 元；``turnover_rate`` 小数口径（0.0812 = 8.12%）。
+    单位：``*_yuan`` 元；``turnover_rate`` / ``change_pct`` / ``seal_ratio`` 为小数口径
+    （0.0812 = 8.12%）。
 
-    可选列说明：不同源的可用列不一致（hithink 无换手率/成交额/市值，
+    可选列说明：不同源的可用列不一致（hithink 无换手率/成交额/总市值/涨停原因，
     xuangutong 无封单金额），缺失写 NULL 而非 0。
     """
 
@@ -157,12 +158,39 @@ class LimitUpPool(SourceMixin, Base):
         Numeric(20, 2), nullable=True, doc="成交额（元）；源缺失为 NULL"
     )
     market_cap_yuan: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2), nullable=True, doc="总市值（元）；源缺失为 NULL"
+    )
+    price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4), nullable=True, doc="现价（元）；源缺失为 NULL"
+    )
+    change_pct: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True, doc="涨跌幅（小数）；源缺失为 NULL"
+    )
+    volume_bias_ratio: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True, doc="量比；源缺失为 NULL"
+    )
+    free_cap_yuan: Mapped[Decimal | None] = mapped_column(
         Numeric(20, 2), nullable=True, doc="流通市值（元）；源缺失为 NULL"
+    )
+    seal_ratio: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 8), nullable=True, doc="封单比（小数）；源缺失为 NULL"
+    )
+    reason: Mapped[str | None] = mapped_column(
+        Text, nullable=True, doc="涨停原因（上游口语化说明）；源缺失为 NULL"
+    )
+    plates: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JsonType, nullable=True, doc='关联板块 [{"plate_id": int, "plate_name": str}]'
+    )
+    timeline: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JsonType,
+        nullable=True,
+        doc='封板时间线 [{"timestamp": int, "status": int}]（1 封涨停/2 炸板/3 封跌停/4 开跌停）',
     )
     pool_type: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        doc="池型：limit_up/limit_down/broken/prev_limit_up/strong/new_stock/sub_new",
+        doc="池型（对齐上游 pool_name）：limit_up/limit_up_broken/yesterday_limit_up/"
+        "super_stock/limit_down/new_stock/nearly_new",
     )
 
 

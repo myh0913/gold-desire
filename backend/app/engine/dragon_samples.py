@@ -349,17 +349,84 @@ def classify_shape(
 # ============================================================ 样本构建
 
 
+def _to_float(value: Any) -> float | None:
+    """尽力转 ``float``；``None`` / 不可解析 → ``None``（不抛异常）。"""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class _BarView:
+    """日线**只读视图** + 回填的昨收。
+
+    用副本而非直接改 ORM 实例，避免把 ``pre_close`` 写脏回库。
+    """
+
+    trade_date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    pre_close: float | None
+    volume_shares: float
+
+
+def _with_pre_close(bars: Sequence[Any]) -> list[_BarView]:
+    """给日线序列**回填昨收**，返回只读视图。
+
+    为什么必须回填：上游日线不带昨收，库中 ``daily_bars.pre_close`` 实测
+    **4593/4593 全为 NULL**，而涨停判定 / 振幅 / 首阴形态 / 样本构造**全部**依赖
+    昨收。此前 ``_is_limit_up`` 直接 ``float(bar.pre_close)`` 抛 ``TypeError``，
+    导致 dragon 策略每次运行必崩（实测当日 239 次 pool + 239 次 intraday 全落
+    error 报告，且一条建议都没产出）。
+
+    昨收取**序列中前一根日线的收盘价**：日线按日期升序、同一股票同一交易日唯一，
+    停牌/缺失日自然跳过——此时昨收即最近一次成交的收盘价，语义不变。
+    行上已有 ``pre_close`` 时优先用它；首根无昨收 → ``None``。
+    """
+    views: list[_BarView] = []
+    prev_close: float | None = None
+    for bar in bars:
+        close = _to_float(getattr(bar, "close", None))
+        views.append(
+            _BarView(
+                trade_date=bar.trade_date,
+                open=_to_float(getattr(bar, "open", None)) or 0.0,
+                high=_to_float(getattr(bar, "high", None)) or 0.0,
+                low=_to_float(getattr(bar, "low", None)) or 0.0,
+                close=close or 0.0,
+                pre_close=_to_float(getattr(bar, "pre_close", None)) or prev_close,
+                volume_shares=_to_float(getattr(bar, "volume_shares", None)) or 0.0,
+            )
+        )
+        prev_close = close
+    return views
+
+
 def _is_limit_up(bar: Any) -> bool:
-    """是否涨停（主板 10%，含四舍五入容差）。"""
-    pre_close = float(bar.pre_close)
-    if pre_close <= 0:
+    """是否涨停（主板 10%，含四舍五入容差）。
+
+    ``pre_close`` 缺失 → **判否**：缺少昨收无法计算涨停幅度，不得臆断。
+    日线序列应先经 :func:`_with_pre_close` 回填昨收。
+    """
+    pre_close = _to_float(getattr(bar, "pre_close", None))
+    close = _to_float(getattr(bar, "close", None))
+    if pre_close is None or close is None or pre_close <= 0:
         return False
-    return float(bar.close) / pre_close - 1 >= _LIMIT_UP_PCT
+    return close / pre_close - 1 >= _LIMIT_UP_PCT
 
 
 def _is_one_word(bar: Any) -> bool:
     """是否一字板（涨停且全天未离开涨停价）。"""
-    return _is_limit_up(bar) and float(bar.low) >= float(bar.close) - 1e-6
+    if not _is_limit_up(bar):
+        return False
+    low = _to_float(getattr(bar, "low", None))
+    close = _to_float(getattr(bar, "close", None))
+    return low is not None and close is not None and low >= close - 1e-6
 
 
 def _is_sanbanzu_wave(wave: Sequence[Any], pre_bar: Any | None) -> bool:
@@ -385,32 +452,39 @@ def _is_sanbanzu_wave(wave: Sequence[Any], pre_bar: Any | None) -> bool:
 def _has_suspect_day(bars: Sequence[Any]) -> bool:
     """是否存在 suspect 日（对齐旧项目 ``analyzer``：|递推涨跌幅| > 10.5%）。
 
-    输入日线自带 ``pre_close``；越界只可能是除权除息 / 送转 / 坏数据，
-    整票拒收（readme §2.5）。
+    昨收取行上的 ``pre_close``（调用方应先经 :func:`_with_pre_close` 回填）；
+    越界只可能是除权除息 / 送转 / 坏数据，整票拒收（readme §2.5）。
+    昨收缺失时**跳过该日**（无法判定，不误杀）。
     """
     for bar in bars:
-        pre = float(getattr(bar, "pre_close", 0) or 0)
-        if pre <= 0:
+        pre = _to_float(getattr(bar, "pre_close", None))
+        close = _to_float(getattr(bar, "close", None))
+        if pre is None or close is None or pre <= 0:
             continue
-        if abs(float(bar.close) / pre - 1) > _SUSPECT_PCT:
+        if abs(close / pre - 1) > _SUSPECT_PCT:
             return True
     return False
 
 
 def _day_metrics(bar: Any) -> DayMetrics:
-    """由日线构造全天字段对象。"""
-    pre_close = float(bar.pre_close)
+    """由日线构造全天字段对象（昨收缺失则涨跌幅类字段留空）。"""
+    base = _to_float(getattr(bar, "pre_close", None))
+    pre_close = base if base is not None and base > 0 else None
+    open_px = _to_float(getattr(bar, "open", None)) or 0.0
+    high_px = _to_float(getattr(bar, "high", None)) or 0.0
+    low_px = _to_float(getattr(bar, "low", None)) or 0.0
+    close_px = _to_float(getattr(bar, "close", None)) or 0.0
     return DayMetrics(
-        open=float(bar.open),
-        high=float(bar.high),
-        low=float(bar.low),
-        close=float(bar.close),
-        open_pct=_pct(float(bar.open), pre_close),
-        high_pct=_pct(float(bar.high), pre_close),
-        low_pct=_pct(float(bar.low), pre_close),
-        close_pct=_pct(float(bar.close), pre_close),
-        amp_pct=(float(bar.high) - float(bar.low)) / pre_close if pre_close > 0 else None,
-        volume=float(bar.volume_shares),
+        open=open_px,
+        high=high_px,
+        low=low_px,
+        close=close_px,
+        open_pct=_pct(open_px, pre_close) if pre_close is not None else None,
+        high_pct=_pct(high_px, pre_close) if pre_close is not None else None,
+        low_pct=_pct(low_px, pre_close) if pre_close is not None else None,
+        close_pct=_pct(close_px, pre_close) if pre_close is not None else None,
+        amp_pct=(high_px - low_px) / pre_close if pre_close is not None else None,
+        volume=_to_float(getattr(bar, "volume_shares", None)) or 0.0,
     )
 
 
@@ -474,13 +548,16 @@ def _sample_from_bars(
     """
     first_yin = bars[index]
     wave = bars[wave_start:index]
-    d_pre_close = float(first_yin.pre_close)
+    d_pre_close = _to_float(first_yin.pre_close)
+    # 昨收缺失 → 无法计算 D 日涨跌幅与形态，丢弃该样本（不臆断）。
+    if d_pre_close is None or d_pre_close <= 0:
+        return None
     px_d = minute_by_date.get(first_yin.trade_date, ())
     if not px_d:
         return None
 
-    wave_volumes = [float(bar.volume_shares) for bar in wave]
-    d_vol = float(first_yin.volume_shares)
+    wave_volumes = [_to_float(bar.volume_shares) or 0.0 for bar in wave]
+    d_vol = _to_float(first_yin.volume_shares) or 0.0
     peak = max(wave_volumes)
     mean = _mean(wave_volumes)
 
@@ -618,8 +695,13 @@ async def build_samples(
         if not _is_main_board_code(str(stock.code)):
             continue
         bars = await repos.daily_bars.get_range(str(stock.code), fetch_start, fetch_end)
-        if not bars or _has_suspect_day(bars):
-            # 空序列 / 疑似除权或坏数据（单日涨跌幅越界 ±10.5%）→ 整票拒收。
+        if not bars:
+            continue
+        # 回填昨收（库中 pre_close 恒为 NULL），必须在 suspect 检测**之前**——
+        # 否则除权检测拿不到昨收，等于死代码。
+        bars = _with_pre_close(bars)
+        if _has_suspect_day(bars):
+            # 疑似除权或坏数据（单日涨跌幅越界 ±10.5%）→ 整票拒收。
             continue
         minute_by_date = await _load_minutes(repos, str(stock.code), bars)
         samples.extend(

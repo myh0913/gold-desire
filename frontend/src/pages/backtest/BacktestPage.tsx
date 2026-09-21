@@ -77,6 +77,9 @@ export default function BacktestPage() {
   const runsQuery = useQuery({
     queryKey: ['report', 'backtest', 'runs'],
     queryFn: ({ signal }) => reportApi.backtestRuns(signal),
+    // 有 running 任务时每 2s 轮询，全部终态后停止（异步回测触发后靠此刷新）。
+    refetchInterval: (query) =>
+      (query.state.data?.items ?? []).some((run) => run.status === 'running') ? 2000 : false,
   });
 
   const active = selected

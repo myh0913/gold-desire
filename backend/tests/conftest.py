@@ -85,6 +85,8 @@ async def app(engine: AsyncEngine) -> AsyncIterator[FastAPI]:
     """测试应用：覆盖 ``get_session``，并种入内置角色、清空缓存。"""
     application = create_app()
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    # 暴露给 DI 层（如 ReportService 后台回测任务复用同一内存库）。
+    application.state.session_factory = factory
 
     async def _override() -> AsyncIterator[AsyncSession]:
         async with factory() as session:

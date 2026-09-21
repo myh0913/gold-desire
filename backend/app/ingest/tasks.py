@@ -115,6 +115,47 @@ async def _write_newsflash(
     return await repos.news_flash.upsert_many([_dump(row, source) for row in rows])
 
 
+async def _write_minute_bars(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """分时分钟点：按 ``(code, trade_date, minute_index)`` 幂等。"""
+    return await repos.minute_bars.upsert_many([_dump(row, source) for row in rows])
+
+
+#: opening_match 写入 ``pool_snapshot`` 的池名（幂等键 ``(trade_date, pool_name)``）。
+OPENING_MATCH_POOL_NAME = "opening_match"
+
+
+async def _write_opening_match(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """09:25 撮合：**复用** ``pool_snapshot`` 存储（``pool_name='opening_match'``）。
+
+    ``payload`` 为 ``{code: {price, volume_lots, time_label}}`` 映射，供策略
+    盘中阶段（Phase.OPENING）读取当日开盘价；无撮合数据的票不出现在映射中。
+    多轮取数（逐票）按**合并**语义写入——后一轮只增改自己的键，不清空前轮
+    （行级 ``upsert`` 以 ``(trade_date, pool_name)`` 为冲突键，整包覆盖会丢前轮）。
+    """
+    existing = await repos.pool_snapshot.get(trade_date, OPENING_MATCH_POOL_NAME)
+    merged: dict[str, Any] = dict(existing.payload) if existing is not None else {}
+    for row in rows:
+        merged[row.code] = {
+            "price": row.price,
+            "volume_lots": row.volume_lots,
+            "time_label": row.time_label,
+        }
+    return await repos.pool_snapshot.upsert_many(
+        [
+            {
+                "trade_date": trade_date,
+                "pool_name": OPENING_MATCH_POOL_NAME,
+                "payload": merged,
+                "source": source,
+            }
+        ]
+    )
+
+
 async def _write_trading_calendar(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
@@ -151,6 +192,8 @@ WRITERS: dict[str, WriterFn] = {
     "theme_stocks": _write_theme_stocks,
     "newsflash": _write_newsflash,
     "trading_calendar": _write_trading_calendar,
+    "minute_bars": _write_minute_bars,
+    "opening_match": _write_opening_match,
 }
 
 
@@ -221,12 +264,13 @@ def _main_board_profile(code: str, name: str) -> dict[str, Any] | None:
     return {"code": code, "name": name, "market": market, "board": "主板", "is_st": False}
 
 
-async def _daily_bar_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
-    """日线取数参数：**每只策略相关票一份**（上游按单只证券取历史区间）。
+async def _candidate_profiles(
+    trade_date: date, repos: Repositories, *, write_stocks: bool = True
+) -> list[dict[str, Any]]:
+    """推导「策略相关票」：近 :data:`DAILY_BAR_LOOKBACK_DAYS` 个自然日**已入库**的
+    涨停池与连板天梯（主板 + 非 ST），按代码升序去重。
 
-    「策略相关票」由近 :data:`DAILY_BAR_LOOKBACK_DAYS` 个自然日**已入库**的涨停池
-    与连板天梯推导（主板 + 非 ST），并顺带把票的基础信息补写进 ``stocks`` 供策略读取；
-    库中暂无相关票时返回空列表（成功 0 行），不新增数据源、不拉全市场。
+    ``write_stocks=True`` 时顺带把票的基础信息补写进 ``stocks``（daily_bars 路径）。
     """
     start = trade_date - timedelta(days=DAILY_BAR_LOOKBACK_DAYS)
     candidates: dict[str, str] = {}
@@ -241,9 +285,20 @@ async def _daily_bar_args(trade_date: date, repos: Repositories) -> list[dict[st
         if (profile := _main_board_profile(code, name)) is not None
     ]
     profiles.sort(key=lambda item: str(item["code"]))
-    if profiles:
+    if profiles and write_stocks:
         await repos.stocks.upsert_many(profiles)
+    return profiles
 
+
+async def _daily_bar_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """日线取数参数：**每只策略相关票一份**（上游按单只证券取历史区间）。
+
+    「策略相关票」由近 :data:`DAILY_BAR_LOOKBACK_DAYS` 个自然日**已入库**的涨停池
+    与连板天梯推导（主板 + 非 ST），并顺带把票的基础信息补写进 ``stocks`` 供策略读取；
+    库中暂无相关票时返回空列表（成功 0 行），不新增数据源、不拉全市场。
+    """
+    profiles = await _candidate_profiles(trade_date, repos)
+    start = trade_date - timedelta(days=DAILY_BAR_LOOKBACK_DAYS)
     start_ms, end_ms = date_ms(start), day_end_ms(trade_date)
     return [
         {
@@ -254,6 +309,12 @@ async def _daily_bar_args(trade_date: date, repos: Repositories) -> list[dict[st
         }
         for profile in profiles
     ]
+
+
+async def _minute_bar_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """分时取数参数：每只策略相关票一份（eltdx 按单只证券取当日/历史分时）。"""
+    profiles = await _candidate_profiles(trade_date, repos, write_stocks=False)
+    return [{"thscode": profile["code"], "date": trade_date.isoformat()} for profile in profiles]
 
 
 _REGISTRY: dict[str, IngestTaskDef] = {}
@@ -325,7 +386,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         name="newsflash",
         capability="newsflash",
         target="newsflash",
-        window=Window("intraday", "09:26", "10:00"),
+        # 全天采集（对齐旧 quant 的 30s 广播 / 60s 上游有效间隔）；
+        # 上游只回最近 ~50 条，按 (ts, title) 幂等增量入库，保留 7 天。
+        window=None,
         interval_seconds=60,
         idempotency_key=_default_key,
         args_builder=_date_args,
@@ -375,6 +438,27 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         interval_seconds=0,
         idempotency_key=_default_key,
         args_builder=_date_args,
+    ),
+    IngestTaskDef(
+        name="minute_bars",
+        capability="minute_bars",
+        target="minute_bars",
+        # 分时：盘中 5 分钟一轮（覆盖 09:30-15:00，含午休空档，幂等覆盖写无害）；
+        # 标的为策略相关票（近 30 天涨停池/天梯推导），供分时形态因子与前端分时图。
+        window=Window("intraday_day", "09:30", "15:00"),
+        interval_seconds=300,
+        idempotency_key=_default_key,
+        args_builder=_minute_bar_args,
+    ),
+    IngestTaskDef(
+        name="opening_match",
+        capability="opening_match",
+        target="opening_match",
+        # 09:25 正式撮合（一次性）：当日开盘价，供策略 Phase.OPENING 盘中判定。
+        window=Window("auction", "09:25", "09:40"),
+        interval_seconds=0,
+        idempotency_key=_default_key,
+        args_builder=_minute_bar_args,
     ),
 )
 

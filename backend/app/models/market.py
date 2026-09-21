@@ -111,8 +111,8 @@ class MinuteBar(SourceMixin, Base):
     time_label: Mapped[str] = mapped_column(String(5), nullable=False, doc="分钟标签 HH:MM")
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False, doc="该分钟收盘价（元）")
     volume_lots: Mapped[int] = mapped_column(BigInteger, nullable=False, doc="该分钟成交量（手）")
-    amount_yuan: Mapped[Decimal] = mapped_column(
-        Numeric(20, 2), nullable=False, doc="该分钟成交额（元）"
+    amount_yuan: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2), nullable=True, doc="该分钟成交额（元）；eltdx 分时不提供，为 NULL"
     )
 
 

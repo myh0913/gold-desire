@@ -1,10 +1,10 @@
-"""报告路由：建议报告（读）与回测（读 + admin 触发）。"""
+"""报告路由：建议报告（读）、复盘（读）与回测（读 + admin 异步触发）。"""
 
 from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import require_admin, require_page
 from app.core.pages import PageKey
@@ -25,9 +25,11 @@ from app.services.review_service import ReviewService
 router = APIRouter(tags=["reports"])
 
 
-def get_report_service(repos: Repositories = Depends(get_repositories)) -> ReportService:
-    """请求级报告服务。"""
-    return ReportService(repos)
+def get_report_service(request: Request, repos: Repositories = Depends(get_repositories)) -> ReportService:
+    """请求级报告服务（携带应用级会话工厂，供后台回测任务复用同一库）。"""
+    return ReportService(
+        repos, session_factory=getattr(request.app.state, "session_factory", None)
+    )
 
 
 def get_review_service(repos: Repositories = Depends(get_repositories)) -> ReviewService:
@@ -113,7 +115,8 @@ async def trigger_backtest(
     actor: User = Depends(require_admin),
     service: ReportService = Depends(get_report_service),
 ) -> BacktestRunOut:
-    """触发一次回测（**同步执行**，直接返回 run 记录；失败置 ``status=failed``）。"""
+    """触发一次回测（**异步执行**：立即返回 ``status=running`` 的任务行，
+    完成/失败由后台任务更新，经 ``GET /backtest/runs`` 轮询）。"""
     return await service.run_backtest(
         start=payload.start,
         end=payload.end,

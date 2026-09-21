@@ -39,6 +39,7 @@ from app.db.partitions import PARTITIONED_TABLES, ensure_partitions_around_today
 from app.db.session import get_engine, get_session_factory
 from app.ingest.pipeline import IngestResult, ProviderLike, contracts_from_raw, fetch_raw, run_task
 from app.ingest.tasks import CALENDAR_POOL_NAME, WRITERS, IngestTaskDef, all_tasks
+from app.ingest.strategy_hooks import AUCTION_PHASES
 from app.ingest.windows import (
     Window,
     in_window,
@@ -362,6 +363,7 @@ class IngestScheduler:
 
             await self._maybe_maintenance(repos, session, target_date, moment, window)
             await self._maybe_strategies(repos, target_date, moment, window)
+            await self._maybe_opening(repos, target_date, moment, window)
             await session.commit()
         return executed
 
@@ -390,6 +392,38 @@ class IngestScheduler:
         except Exception:
             logger.exception(
                 "strategy_phases_failed", extra={"trade_date": trade_date.isoformat()}
+            )
+
+    async def _maybe_opening(
+        self,
+        repos: Repositories,
+        trade_date: date,
+        now: datetime,
+        window: str | Window | None,
+    ) -> None:
+        """竞价窗口内执行开盘判定（Phase.OPENING，幂等）。
+
+        前置条件：``opening_match`` 采集任务当日已成功（撮合价落库）——
+        未就绪时静默跳过，下一 tick 重试；这是「次日开盘买点」盘中提示
+        （readme §8 时间轴 09:25 行）的实现。
+        """
+        from app.ingest.strategy_hooks import run_strategy_phases
+
+        if window is not None:
+            name = window.name if isinstance(window, Window) else str(window)
+            if name != "auction":
+                return
+        elif not in_window(now, self._window("auction")):
+            return
+        if await _state_status(repos, "opening_match", trade_date) != "succeeded":
+            return
+        try:
+            await run_strategy_phases(
+                repos, self.settings, trade_date, phases=AUCTION_PHASES
+            )
+        except Exception:
+            logger.exception(
+                "strategy_opening_failed", extra={"trade_date": trade_date.isoformat()}
             )
 
     async def _maybe_maintenance(

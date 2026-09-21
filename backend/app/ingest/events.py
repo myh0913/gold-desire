@@ -34,6 +34,10 @@ CAPABILITY_EVENTS: dict[str, tuple[str | None, tuple[str, ...]]] = {
     "theme_rank": ("themes", ("theme",)),
     "theme_stocks": ("themes", ("theme",)),
     "daily_bars": (None, ("daily_bars", "minute_bars")),
+    # minute_bars 供策略/分时图消费，无读缓存与 WS 事件；
+    # opening_match 落 pool_snapshot，供 Phase.OPENING 读取，不产生事件。
+    "minute_bars": (None, ("minute_bars",)),
+    "opening_match": (None, ()),
     # trading_calendar / 无读缓存的能力不产生事件。
 }
 

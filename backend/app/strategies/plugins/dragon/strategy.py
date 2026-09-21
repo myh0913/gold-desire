@@ -114,7 +114,7 @@ class DragonStrategy(BaseStrategy):
     label = "龙回头"
     version = "1.0.0"
     description = "龙回头两路：S2 = D+1 开盘（高位跳水型）、S4 = D+2 开盘（缩量反转型）。"
-    phases: ClassVar[frozenset[Phase]] = frozenset({Phase.POOL, Phase.INTRADAY})
+    phases: ClassVar[frozenset[Phase]] = frozenset({Phase.POOL, Phase.OPENING, Phase.INTRADAY})
     params_schema: ClassVar[tuple[StrategyParamSpec, ...]] = (
         StrategyParamSpec(
             key="base_position",
@@ -253,13 +253,20 @@ class DragonStrategy(BaseStrategy):
         *,
         factor_params: Mapping[str, Mapping[str, Any]],
         params: Mapping[str, Any],
+        require_sell: bool = True,
     ) -> Advice | None:
-        """对单条样本给出最高优先级的结构化建议；未命中任何一路返回 ``None``。"""
+        """对单条样本给出最高优先级的结构化建议；未命中任何一路返回 ``None``。
+
+        ``require_sell=False`` 为**开盘判定**（Phase.OPENING）路径：可卖日尚未
+        发生，卖出撮合无从模拟，跳过 ``sell is not None`` 校验（止损价仍可给出）。
+        """
         ctx = sample.factor_context()
         stop_loss = float(self.param(params, "stop_loss"))
         for path in sorted(self.build_paths(params), key=lambda item: item.priority):
             evaluation = evaluate_path(path, sample, ctx, factor_params)
-            if not (evaluation.matched and evaluation.sell is not None):
+            if not evaluation.matched:
+                continue
+            if require_sell and evaluation.sell is None:
                 continue
             buy_price = path.buy_price(sample)
             buy_day = evaluation.buy_day or sample.D
@@ -284,6 +291,64 @@ class DragonStrategy(BaseStrategy):
         return None
 
     # ------------------------------------------------------------ 生命周期钩子
+
+    async def confirm_opening(self, ctx: Any) -> dict[str, Any]:
+        """开盘判定（09:25 撮合价就绪后，竞价窗口内执行一次）。
+
+        数据链：``opening_match`` 采集任务把当日撮合价落 ``pool_snapshot`` →
+        本钩子经 :func:`build_opening_samples` 合成开盘注入样本 → S2（D=上一
+        交易日）/ S4（D=上上交易日）按硬门槛判定 → 命中即落 ``advice_reports``
+        （``buy_day = 今日``），实现「次日开盘买点」的**盘中实时提示**
+        （readme §8 时间轴的 09:25 行）。
+        """
+        if getattr(ctx, "repos", None) is None:
+            return {"strategy_id": self.strategy_id, "trade_date": ctx.trade_date.isoformat(), "advices": []}
+        from app.engine.dragon_samples import build_opening_samples
+
+        row = await ctx.repos.pool_snapshot.get(ctx.trade_date, "opening_match")
+        opening: dict[str, float] = {}
+        if row is not None:
+            payload = row.payload or {}
+            opening = {
+                str(code): float(item["price"])
+                for code, item in payload.items()
+                if isinstance(item, dict) and item.get("price")
+            }
+        if not opening:
+            return {
+                "strategy_id": self.strategy_id,
+                "trade_date": ctx.trade_date.isoformat(),
+                "phase": "opening",
+                "advices": [],
+            }
+
+        samples = await build_opening_samples(ctx.repos, ctx.trade_date, opening)
+        params = await self.get_params(ctx)
+        resolved = await self._resolve_factor_params(ctx)
+        factor_params = self.build_factor_params(params, resolved)
+
+        advices = [
+            advice
+            for advice in (
+                self.advise(
+                    sample,
+                    factor_params=factor_params,
+                    params=params,
+                    require_sell=False,
+                )
+                for sample in samples
+            )
+            if advice is not None
+        ]
+        payloads = self._to_reports(ctx, advices)
+        if payloads:
+            await ctx.repos.advice_reports.upsert_many(payloads)
+        return {
+            "strategy_id": self.strategy_id,
+            "trade_date": ctx.trade_date.isoformat(),
+            "phase": "opening",
+            "advices": [advice.to_payload() for advice in advices],
+        }
 
     async def build_pool(self, ctx: Any) -> dict[str, Any]:
         """盘后建池：识别候选龙回头结构（≥2 连板波 + 紧邻首阴）。

@@ -499,7 +499,13 @@ async def test_resolve_raw_returns_vendor_payload() -> None:
 
 async def test_all_capabilities_resolve_to_contracts() -> None:
     """Phase-1 全部能力均可经统一入口解析为契约对象。"""
+    # minute_bars / opening_match 为按票取数能力（必需 thscode/date 参数），
+    # 无法无参解析，且其真实源为 eltdx TCP（SDK 缺失时显式失败）——
+    # 端到端覆盖见 tests/test_minute_opening.py。
+    skip = {"minute_bars", "opening_match"}
     for capability, model in CAPABILITY_CONTRACTS.items():
+        if capability in skip:
+            continue
         rows = await resolve(capability)
         assert rows, f"{capability} 未产出记录"
         assert all(isinstance(row, model) for row in rows)

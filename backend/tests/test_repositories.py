@@ -15,7 +15,16 @@ import pytest
 from app.db.base import Base
 from app.models.auth import AuditLog
 from app.models.derived import AdviceReport
-from app.models.market import DailyBar, LimitUpPool, MinuteBar
+from app.models.market import (
+    DailyBar,
+    LadderRow,
+    LimitUpPool,
+    MinuteBar,
+    MonitorStock,
+    NewsFlash,
+    Theme,
+    ThemeStock,
+)
 from app.models.raw import RawResponse
 from app.repositories import (
     DailyBarRepository,
@@ -28,6 +37,7 @@ from app.repositories import (
     StrategyConfigRepository,
     get_repositories,
 )
+from app.repositories.base import BaseRepository
 from app.repositories.retention import run_retention
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -309,6 +319,102 @@ async def test_run_retention_deletes_only_expired(session: AsyncSession) -> None
     # 永久表不受影响
     assert await _row_count(session, DailyBar) == 1
     assert await _row_count(session, AdviceReport) == 1
+
+
+async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) -> None:
+    """快讯/主题 7 天、监管名单仅最新交易日、涨停池 90 天、天梯永久。"""
+    now = datetime.now(UTC)
+    today = now.date()
+
+    def _news(ts: datetime, title: str) -> NewsFlash:
+        return NewsFlash(ts=ts, title=title, summary="", symbols=[], categories=[], source="t")
+
+    session.add(_news(now - timedelta(days=9), "旧快讯"))
+    session.add(_news(now - timedelta(days=1), "新快讯"))
+    for days, rank in ((9, 1), (1, 2)):
+        session.add(
+            Theme(
+                trade_date=today - timedelta(days=days),
+                rank=rank,
+                name=f"主题{rank}",
+                core_avg_pct=Decimal("0.05"),
+                description=None,
+                core_count=2,
+                source="t",
+            )
+        )
+        session.add(
+            ThemeStock(
+                trade_date=today - timedelta(days=days),
+                theme_name="主题1",
+                code="600001.SH",
+                name="测试",
+                price=Decimal("10"),
+                pct=Decimal("0.05"),
+                turnover_rate=Decimal("0.1"),
+                continue_days=None,
+                selected_at=None,
+                source="t",
+            )
+        )
+    for days in (9, 1):
+        session.add(
+            MonitorStock(
+                trade_date=today - timedelta(days=days),
+                kind="key_monitor",
+                code="600001.SH",
+                name="测试",
+                reason=None,
+                source="t",
+            )
+        )
+    for days in (120, 10):
+        await LimitUpPoolRepository(session).upsert_many(
+            [
+                {
+                    "trade_date": today - timedelta(days=days),
+                    "code": "600001.SH",
+                    "name": "测试",
+                    "continue_days": 2,
+                    "limit_up_time": "09:31",
+                    "seal_amount_yuan": None,
+                    "open_times": None,
+                    "turnover_rate": None,
+                    "amount_yuan": None,
+                    "market_cap_yuan": None,
+                    "pool_type": "limit_up",
+                    "source": "t",
+                }
+            ]
+        )
+    ladder_repo = LadderRepository(session)
+    for days in (120, 10):
+        await ladder_repo.upsert_many(
+            [
+                {
+                    "trade_date": today - timedelta(days=days),
+                    "code": "600001.SH",
+                    "name": "测试",
+                    "continue_days": 2,
+                    "first_seal_time": "09:31",
+                    "source": "t",
+                }
+            ]
+        )
+    await session.commit()
+
+    report = await run_retention(session=session)
+
+    assert report.news_deleted == 1
+    assert report.themes_deleted == 1
+    assert report.theme_stocks_deleted == 1
+    assert report.monitor_deleted == 1
+    assert report.pools_deleted == 1
+    # 天梯永久
+    assert await _row_count(session, LadderRow) == 2
+    # 监管名单只剩最新交易日
+    remaining_monitor = (await session.execute(select(MonitorStock))).scalars().all()
+    assert {row.trade_date for row in remaining_monitor} == {today - timedelta(days=1)}
 
 
 # --------------------------------------------------------------- 6. 情绪历史

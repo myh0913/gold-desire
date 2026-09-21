@@ -75,7 +75,7 @@ class BacktestRunsResponse(BaseModel):
 
 
 class BacktestRunRequest(BaseModel):
-    """触发一次回测（同步执行，返回 run 记录）。"""
+    """触发一次回测（异步执行：立即返回 running 任务行，完成/失败由后台任务更新）。"""
 
     start: date = Field(description="回测起始日（含）")
     end: date = Field(description="回测结束日（含）")

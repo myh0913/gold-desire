@@ -72,6 +72,7 @@ class Phase(StrEnum):
     """策略参与的生命周期阶段（与调度器时间轴对齐）。"""
 
     AUCTION = "auction"      # 9:25 竞价阶段
+    OPENING = "opening"      # 9:25 撮合价就绪后的开盘判定（次日开盘买点提示）
     POOL = "pool"            # 盘后建池
     SCENE = "scene"          # 开盘场景分类
     INTRADAY = "intraday"    # 盘中确认
@@ -93,6 +94,7 @@ class CycleState(StrEnum):
 #: 阶段 → 生命周期钩子方法名（``BaseStrategy.execute`` 据此分派）。
 PHASE_HOOKS: dict[Phase, str] = {
     Phase.AUCTION: "run_auction_pipeline",
+    Phase.OPENING: "confirm_opening",
     Phase.POOL: "build_pool",
     Phase.SCENE: "classify_scenes",
     Phase.INTRADAY: "confirm_intraday",
@@ -387,6 +389,10 @@ class BaseStrategy(ABC):  # noqa: B024 - 生命周期钩子均为可选（默认
 
     async def classify_scenes(self, ctx: StrategyContext) -> Any:
         """开盘场景分类钩子（默认 no-op）。"""
+        return None
+
+    async def confirm_opening(self, ctx: StrategyContext) -> Any:
+        """开盘判定钩子（09:25 撮合价就绪后；默认 no-op）。"""
         return None
 
     async def confirm_intraday(self, ctx: StrategyContext) -> Any:

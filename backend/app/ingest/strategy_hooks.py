@@ -31,12 +31,15 @@ from app.strategies.context import StrategyContextFactory
 from app.strategies.protocol import Phase
 from app.strategies.registry import PhaseRunSummary, run_phase
 
-__all__ = ["POSTMARKET_PHASES", "run_strategy_phases", "strategy_state_name"]
+__all__ = ["AUCTION_PHASES", "POSTMARKET_PHASES", "run_strategy_phases", "strategy_state_name"]
 
 logger = logging.getLogger(__name__)
 
 #: 盘后窗口内依次执行的策略阶段。
 POSTMARKET_PHASES: tuple[Phase, ...] = (Phase.POOL, Phase.INTRADAY)
+
+#: 竞价窗口内执行的开盘判定阶段（依赖 ``opening_match`` 采集已成功）。
+AUCTION_PHASES: tuple[Phase, ...] = (Phase.OPENING,)
 
 _STATE_PREFIX = "strategy_state"
 
@@ -98,7 +101,7 @@ async def _broadcast_phase(phase: Phase, trade_date: date, summary: PhaseRunSumm
                 },
             )
             return
-        if phase is Phase.INTRADAY:
+        if phase in (Phase.INTRADAY, Phase.OPENING):
             advices: list[dict[str, Any]] = []
             for result in summary.results:
                 if result.ok and isinstance(result.output, dict):
@@ -110,6 +113,7 @@ async def _broadcast_phase(phase: Phase, trade_date: date, summary: PhaseRunSumm
                     "advice",
                     {
                         "source": "strategy:dragon",
+                        "phase": phase.value,
                         "trade_date": trade_date.isoformat(),
                         "count": len(advices),
                         "advices": advices,

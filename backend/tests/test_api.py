@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import pathlib
 from collections.abc import Iterator
@@ -415,7 +416,7 @@ async def test_ingest_jobs_and_trigger(
 async def test_backtest_run_endpoint(
     client: httpx.AsyncClient, admin_token: str, market_seed: dict[str, Any]
 ) -> None:
-    """触发回测（同步执行）返回 run 记录并落库。"""
+    """触发回测（异步执行）立即返回 running，随后由后台任务落终态。"""
     response = await client.post(
         "/api/backtest/run",
         json={"start": "2026-01-01", "end": "2026-06-30", "strategy_id": "dragon"},
@@ -424,7 +425,20 @@ async def test_backtest_run_endpoint(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["run_id"]
-    assert body["status"] in {"succeeded", "failed"}
+
+    # 后台任务在同一事件循环执行；轮询直到终态（上限 ~10s）。
+    final: dict[str, Any] | None = None
+    for _ in range(50):
+        await asyncio.sleep(0.2)
+        detail = await client.get(
+            f"/api/backtest/runs/{body['run_id']}", headers=auth_header(admin_token)
+        )
+        assert detail.status_code == 200
+        if detail.json()["status"] in {"succeeded", "failed"}:
+            final = detail.json()
+            break
+    assert final is not None, "回测任务 10s 内未到达终态"
+    assert final["status"] in {"succeeded", "failed"}
 
     listed = await client.get("/api/backtest/runs", headers=auth_header(admin_token))
     assert listed.status_code == 200

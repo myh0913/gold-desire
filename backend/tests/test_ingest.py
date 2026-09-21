@@ -302,7 +302,7 @@ async def test_scheduler_state_prevents_rerun_and_retries_failures(
         now_fn=lambda: morning,
     )
     first = await sched.run_once(window="auction")
-    assert [result.task for result in first] == ["limit_up_pool"]
+    assert {result.task for result in first} == {"limit_up_pool", "opening_match"}
     assert await sched.run_once(window="auction") == []
     async with factory() as session:
         assert await _count(session, IngestJob, capability="limit_up_pool") == 1
@@ -355,7 +355,7 @@ async def test_calendar_failure_falls_back_to_weekdays(
         now_fn=lambda: datetime(2026, 9, 18, 9, 30, tzinfo=SH),
     )
     results = await sched.run_once(window="auction")
-    assert [result.task for result in results] == ["limit_up_pool"]
+    assert {result.task for result in results} == {"limit_up_pool", "opening_match"}
 
 
 # ============================================================ 7. 窗口过滤
@@ -389,8 +389,8 @@ async def test_interval_task_reruns_after_success_within_window(
     """回归 Bug #1（docs/bugs-2026-09-21.md）：interval>0 任务成功后按间隔重跑。
 
     历史缺陷：``run_once`` 先判 ``_state_status == succeeded`` 再判 interval，
-    newsflash 09:26 成功后被 succeeded 状态永久跳过——整个 intraday 窗口
-    只跑 1 次，interval_seconds=60 形同虚设。
+    newsflash 成功后被 succeeded 状态永久跳过——interval_seconds=60 形同虚设。
+    newsflash 现为全天采集（``window=None``），用无窗口 ``run_once()`` 驱动。
     """
     provider = RecordingProvider()
     settings = get_settings()
@@ -399,27 +399,32 @@ async def test_interval_task_reruns_after_success_within_window(
         settings, session_factory=factory, provider_override=provider, now_fn=lambda: clock["now"]
     )
 
-    first = await sched.run_once(window="intraday")
-    assert [result.task for result in first] == ["newsflash"]
-    assert first[0].status == "succeeded"
+    first = await sched.run_once()
+    # 09:26:02 同时落在 auction（池+撮合）与全天快讯窗口内
+    assert {result.task for result in first} == {
+        "trading_calendar",
+        "limit_up_pool",
+        "opening_match",
+        "newsflash",
+    }
+    assert next(r for r in first if r.task == "newsflash").status == "succeeded"
 
-    # +30s：未到 60s 间隔 → 不跑
+    # +30s：未到 60s 间隔 → 不跑（其余均为一次性任务且已成功）
     clock["now"] = clock["now"] + timedelta(seconds=30)
-    assert await sched.run_once(window="intraday") == []
+    assert await sched.run_once() == []
 
     # +61s：到期 → 重跑（即便上次已 succeeded）
     clock["now"] = clock["now"] + timedelta(seconds=31)
-    again = await sched.run_once(window="intraday")
+    again = await sched.run_once()
     assert [result.task for result in again] == ["newsflash"]
     assert again[0].status == "succeeded"
 
-    # 一次性任务（limit_up_pool）语义不变：成功后同窗口不重跑
+    # 一次性任务语义不变：成功后同窗口不重跑
     morning = datetime(2026, 9, 18, 9, 30, tzinfo=SH)
     clock["now"] = morning
     oneshot = IngestScheduler(
         settings, session_factory=factory, provider_override=provider, now_fn=lambda: clock["now"]
     )
-    assert [r.task for r in await oneshot.run_once(window="auction")] == ["limit_up_pool"]
     assert await oneshot.run_once(window="auction") == []
 
 
@@ -433,14 +438,14 @@ async def test_interval_task_survives_scheduler_restart(
     first_sched = IngestScheduler(
         settings, session_factory=factory, provider_override=provider, now_fn=lambda: moment
     )
-    await first_sched.run_once(window="intraday")
+    await first_sched.run_once()
 
     # 模拟 worker 重启：全新实例（_last_attempt 为空），同一时刻重启
     restarted = IngestScheduler(
         settings, session_factory=factory, provider_override=provider, now_fn=lambda: moment
     )
-    results = await restarted.run_once(window="intraday")
-    assert [result.task for result in results] == ["newsflash"]
+    results = await restarted.run_once()
+    assert "newsflash" in {result.task for result in results}
 
 
 # ============================================================ 9. 快讯落库（Bug #2 回归）
@@ -463,7 +468,7 @@ async def test_newsflash_rows_land_in_db_and_queryable(
         provider_override=provider,
         now_fn=lambda: datetime(2026, 9, 18, 9, 26, 2, tzinfo=SH),
     )
-    results = await sched.run_once(window="intraday")
+    results = await sched.run_once()
     newsflash = next(result for result in results if result.task == "newsflash")
     assert newsflash.status == "succeeded"
 

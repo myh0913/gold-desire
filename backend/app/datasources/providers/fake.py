@@ -131,6 +131,16 @@ def default_payloads() -> dict[str, Any]:
                 }
             ]
         },
+        "minute_bars": {
+            "points": [
+                {"time_label": "09:31", "price": 39.16, "volume": 1673.0},
+                {"time_label": "09:32", "price": 39.03, "volume": 1970.0},
+                {"time_label": "09:33", "price": 39.2, "volume": 1210.0},
+            ]
+        },
+        "opening_match": {
+            "matches": [{"price": 39.1, "volume": 5200.0, "time_label": "09:25"}]
+        },
     }
 
 
@@ -150,6 +160,8 @@ class FakeProvider(BaseProvider):
         "theme_rank",
         "theme_stocks",
         "newsflash",
+        "minute_bars",
+        "opening_match",
     )
     rate_limit_per_min: ClassVar[int] = 600
 

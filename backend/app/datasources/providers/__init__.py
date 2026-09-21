@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from app.datasources.providers.eltdx import EltdxProvider
 from app.datasources.providers.fake import FakeProvider
 from app.datasources.providers.hithink import HithinkProvider
 from app.datasources.providers.xuangutong import XuangutongProvider
@@ -15,6 +16,7 @@ from app.datasources.registry import set_capability_order
 
 __all__ = [
     "REAL_CAPABILITY_PROVIDERS",
+    "EltdxProvider",
     "FakeProvider",
     "HithinkProvider",
     "XuangutongProvider",
@@ -24,7 +26,8 @@ __all__ = [
 #: 真实源接入后各能力的默认主备顺序（主源在前）。顺序依据参考项目
 #: ``quant-system.datasource.registry.CAPABILITY_PROVIDERS`` 与 ``DATA_CONTRACT.md``：
 #: hithink 为 daily_bars / ladder / trading_calendar / limit_up_pool 主源，
-#: xuangutong 为 market_sentiment / theme_rank / theme_stocks / newsflash 主源，fake 兜底。
+#: xuangutong 为 market_sentiment / theme_rank / theme_stocks / newsflash 主源，
+#: eltdx 为 minute_bars / opening_match 主源（分时唯一真实源，无 HTTP 备源），fake 兜底。
 #
 # 说明：本体载入即通过 :func:`set_capability_order` 安装为「运行时覆盖」，
 # 不改动 ``registry.CAPABILITY_PROVIDERS`` 默认表（保持全 fake），从而离线测试在未显式
@@ -38,6 +41,8 @@ REAL_CAPABILITY_PROVIDERS: dict[str, list[str]] = {
     "theme_rank": ["xuangutong", "fake"],
     "theme_stocks": ["xuangutong", "fake"],
     "newsflash": ["xuangutong", "fake"],
+    "minute_bars": ["eltdx", "fake"],
+    "opening_match": ["eltdx", "fake"],
 }
 
 

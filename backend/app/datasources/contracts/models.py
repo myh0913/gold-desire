@@ -26,7 +26,9 @@ __all__ = [
     "LadderRowContract",
     "LimitUpStockContract",
     "MarketSentimentContract",
+    "MinuteBarContract",
     "NewsFlashContract",
+    "OpeningMatchContract",
     "ThemeRankContract",
     "ThemeStockContract",
     "TradingDayContract",
@@ -163,3 +165,38 @@ class NewsFlashContract(ContractModel):
     summary: str = Field(default="", description="摘要，源缺失时为空串")
     symbols: list[str] = Field(default_factory=list, description="关联证券代码列表")
     categories: list[str] = Field(default_factory=list, description="分类/标签列表")
+
+
+class MinuteBarContract(ContractModel):
+    """个股分时分钟点契约（240 个交易分钟，索引 0..239）。
+
+    口径对齐旧项目 eltdx 分时（``DATA_CONTRACT.md`` / analyzer 注释）：
+    ``time_label`` 为**零填充 ``"HH:MM"``**（09:31~11:30 → 0..119，
+    13:01~15:00 → 120..239，字符串比较安全）；``volume_lots`` 单位**手**
+    （eltdx 分钟增量为手，与 hithink 日线「股」换算系数 100）。
+    ``amount_yuan`` 仅部分源提供，缺失为 ``None``（不估算）。
+    """
+
+    code: str = Field(description="证券代码，标准形如 600519.SH")
+    trade_date: date = Field(description="交易日（Asia/Shanghai）")
+    minute_index: int = Field(ge=0, le=239, description="分钟序号 0..239")
+    time_label: str = Field(description="分钟标签，零填充 HH:MM（如 09:31 / 14:45）")
+    price: float = Field(gt=0, description="该分钟收盘价，单位：元")
+    volume_lots: int = Field(ge=0, description="该分钟成交量，单位：手")
+    amount_yuan: float | None = Field(
+        default=None, ge=0, description="该分钟成交额，单位：元；源缺失为 None"
+    )
+
+
+class OpeningMatchContract(ContractModel):
+    """09:25 集合竞价正式撮合契约（单只股票单日，无撮合则无记录）。"""
+
+    code: str = Field(description="证券代码，标准形如 600519.SH")
+    trade_date: date = Field(description="交易日（Asia/Shanghai）")
+    price: float = Field(gt=0, description="撮合价（即当日开盘价），单位：元")
+    volume_lots: int | None = Field(
+        default=None, ge=0, description="撮合成交量，单位：手；源缺失为 None"
+    )
+    time_label: str | None = Field(
+        default=None, description="撮合时间标签（如 09:25）；源缺失为 None"
+    )

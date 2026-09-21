@@ -77,7 +77,7 @@ class DailyBarsResponse(MarketMeta):
 
 
 class MinuteBarOut(BaseModel):
-    """分时行情（``price`` 元，``volume_lots`` 手）。"""
+    """分时行情（``price`` 元，``volume_lots`` 手；``amount_yuan`` eltdx 源为 null）。"""
 
     model_config = _ORM
 
@@ -87,7 +87,7 @@ class MinuteBarOut(BaseModel):
     time_label: str
     price: float
     volume_lots: int
-    amount_yuan: float
+    amount_yuan: float | None = None
 
 
 class MinuteBarsResponse(MarketMeta):

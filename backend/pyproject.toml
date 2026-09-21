@@ -30,6 +30,8 @@ dev = [
     "mypy>=1.10",
     "fakeredis>=2.23",
 ]
+# 分时/竞价撮合唯一真实源（通达信 TDX TCP，可选依赖；缺失时采集侧降级 fake）
+eltdx = ["eltdx>=3.1.3"]
 
 [build-system]
 requires = ["setuptools>=68"]

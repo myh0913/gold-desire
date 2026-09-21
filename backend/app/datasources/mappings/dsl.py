@@ -293,17 +293,22 @@ def _extract_records(
         for node, ancestors in scoped
         for element in (node if _is_list(node) else [node])
     ]
-    if not scoped and not any(token is _EACH for token in tokens):
-        raise ContractValidationError(
-            [
-                _issue(
-                    mapping,
-                    mapping.record_path,
-                    "record_path 在 payload 中不存在",
-                    mapping.record_path,
-                )
-            ]
-        )
+    if not scoped:
+        # 区分「路径不存在」与「路径存在但为空列表」：后者是合法的 0 条记录
+        # （如上游当日无快讯 / 无撮合数据），按成功 0 行处理，绝不报错。
+        path_exists = _lookup(payload, mapping.record_path) is not _MISSING
+        if not path_exists and not any(token is _EACH for token in tokens):
+            raise ContractValidationError(
+                [
+                    _issue(
+                        mapping,
+                        mapping.record_path,
+                        "record_path 在 payload 中不存在",
+                        mapping.record_path,
+                    )
+                ]
+            )
+        return []
     return scoped
 
 

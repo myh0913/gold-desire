@@ -29,15 +29,19 @@ std_* / derived_* 分区表（月分区，幂等覆盖写 upsert）
 
 | 窗口 | 默认区间 | 内容 |
 | --- | --- | --- |
-| auction | 09:25–09:40 | 竞价池（涨停池首封） |
+| auction | 09:25–09:40 | 竞价池（涨停池首封）+ 09:25 撮合价（opening_match，供策略开盘判定） |
 | intraday | 09:26–10:00 | 盘中轮询（快讯等，按 interval 重复） |
 | tailpan | 14:45–15:00 | 尾盘题材（题材榜 / 题材个股） |
 | postmarket | 17:00–18:00 | 盘后日线 / 天梯 / 情绪 / 交易日历 |
+| intraday_day | 09:30–15:00 | 全时段分时（minute_bars，5 分钟一轮，覆盖午休空档） |
 
 覆盖方式（`.env`）：`INGEST_WINDOW_AUCTION=09:25-09:40`、
 `INGEST_TICK_SECONDS=15`（调度 tick）、`INGEST_CALENDAR_TTL_SECONDS=432000`
 （日历缓存 5 天）。交易日历取自 `trading_calendar` 能力并缓存（复用
 `pool_snapshot`），上游失败回退「周一至五」并告警，不崩溃。
+
+> 快讯（newsflash）为**全天采集**（`window=None`，间隔 60s），依赖调度器的
+> 交易日判定（非交易日整轮跳过）。
 
 ### 2.2 幂等与状态
 
@@ -57,12 +61,19 @@ std_* / derived_* 分区表（月分区，幂等覆盖写 upsert）
 
 ### 2.3 保留策略（`app/repositories/retention.py`，盘后维护任务执行）
 
-| 数据 | 保留 |
-| --- | --- |
-| `raw_*` 原始响应 | 30 天 |
-| `std_minute_bars` 分钟线 | 90 天 |
-| `std_daily_bars` 日线 | 永久 |
-| `advice_reports` 建议报告 | 永久 |
+| 数据 | 保留 | 依据 |
+| --- | --- | --- |
+| `raw_*` 原始响应 | 30 天 | 排障留档 |
+| `std_minute_bars` 分钟线 | 90 天 | 量最大的明细数据 |
+| `news_flash` 快讯 | 7 天（按 `ts`） | 对齐旧 quant |
+| `themes` / `theme_stocks` 主题 | 7 个交易日（按 `trade_date`） | 对齐旧 quant |
+| `monitor_stocks` 监管名单 | 仅最新交易日 | 对齐旧 quant「最新兜底」语义 |
+| `limit_up_pool` 涨停池 | 90 天 | 日线候选推导依赖 30 天池历史（与旧 quant「仅最新」不同，见下） |
+| `std_daily_bars` 日线 / `advice_reports` 建议 / `ladder` 天梯 | 永久 | 天梯对齐旧 quant 无清理；日线为策略基础数据 |
+
+> 涨停池与旧 quant「仅留最新」的差异：本系统日线采集标的与策略候选由
+> 「近 30 天涨停池 + 天梯」推导（`_candidate_profiles`），池历史是功能依赖，
+> 保留 90 天兼顾有界增长与功能正确性。
 
 同一维护任务还负责**预建未来月分区**（`db/partitions.py`），避免月初写入失败。
 

@@ -1,18 +1,22 @@
 """报告读服务 + 回测触发：建议报告、回测任务、回测执行。
 
-读路径只访问 DB + 缓存；写路径（:meth:`ReportService.run_backtest`）为 admin 触发，
-**同步执行**（回测为 CPU/DB 密集但单机规模有限，直接同步返回 run 记录，避免引入后台
-队列与额外进程）。执行失败会把 ``backtest_runs.status`` 置 ``failed`` 并记录错误，
-仍返回 200，便于前端与 Agent 观测。
+读路径只访问 DB + 缓存；写路径（:meth:`ReportService.start_backtest`）为 admin 触发，
+**异步执行**：接口只创建 ``status=running`` 的任务行并立即返回，重活交给后台任务
+（独立会话，随 api 进程事件循环执行；完成/失败由后台任务更新状态并失效报告缓存）。
+前端/Agent 经 ``GET /backtest/runs`` 轮询任务状态。
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from datetime import date
 from typing import Any, cast
 
+from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationError
+from app.db.session import get_session_factory
 from app.engine.backtest import resolve_factor_params, run_backtest
 from app.engine.dragon_samples import build_samples
 from app.factors.registry import FactorRepos
@@ -33,6 +37,11 @@ from app.strategies.registry import get_strategy
 
 __all__ = ["ReportService"]
 
+logger = logging.getLogger(__name__)
+
+#: 后台回测任务的强引用集（asyncio 只持弱引用，不持会被 GC 中途取消）。
+_BACKTEST_TASKS: set[asyncio.Task[None]] = set()
+
 
 def _iso(value: date | None) -> str | None:
     """日期转 ISO 串（供缓存键）。"""
@@ -40,12 +49,26 @@ def _iso(value: date | None) -> str | None:
 
 
 class ReportService:
-    """建议报告与回测任务服务。"""
+    """建议报告与回测任务服务。
 
-    def __init__(self, repos: Repositories, policy: CachePolicy | None = None) -> None:
+    Args:
+        repos: 请求级仓储容器。
+        policy: 缓存策略；缺省用进程内单例。
+        session_factory: 后台回测任务的会话工厂（测试注入以复用请求级内存库）；
+            缺省用全局工厂（生产 PG）。
+    """
+
+    def __init__(
+        self,
+        repos: Repositories,
+        policy: CachePolicy | None = None,
+        *,
+        session_factory: Any | None = None,
+    ) -> None:
         self._repos = repos
         self._read = ReadRepository(repos.session)
         self._policy = policy if policy is not None else get_cache_policy()
+        self._session_factory = session_factory
 
     # ------------------------------------------------------------------ 建议
 
@@ -147,7 +170,11 @@ class ReportService:
         params_override: dict[str, Any] | None = None,
         created_by: str | None = None,
     ) -> BacktestRunOut:
-        """同步执行一次回测并落 ``backtest_runs``（幂等键为生成的 ``run_id``）。
+        """创建回测任务并**后台异步执行**，立即返回 ``status=running`` 的任务行。
+
+        - 幂等键为生成的 ``run_id``；后台任务使用**独立会话**（请求会话随响应关闭）；
+        - 完成 / 失败由后台任务更新 ``backtest_runs`` 并失效报告缓存；
+        - 前端 / Agent 经 ``GET /backtest/runs`` 或 ``GET /backtest/runs/{id}`` 轮询。
 
         Raises:
             NotFoundError: 策略未注册。
@@ -168,33 +195,6 @@ class ReportService:
         await self._repos.backtest_runs.create(
             run_id, start, end, [strategy_id], dict(params_override or {}), created_by=created_by
         )
-        try:
-            resolved = await resolve_params(strategy_cls, cast("StrategyRepos", self._repos))
-            params = dict(resolved.params)
-            if params_override:
-                params.update(params_override)
-            resolved_factors = await resolve_factor_params(
-                strategy.factor_param_ids(), cast("FactorRepos", self._repos)
-            )
-            factor_params = strategy.build_factor_params(params, resolved_factors)
-            samples = await build_samples(self._repos, start, end)
-            await run_backtest(
-                samples,
-                params,
-                paths=strategy.build_paths(params),
-                factor_params=factor_params,
-                strategy_id=strategy_id,
-                repos=self._repos,
-                run_id=run_id,
-            )
-        except Exception as exc:
-            await self._repos.backtest_runs.update_status(
-                run_id, "failed", error=f"{type(exc).__name__}: {exc}"
-            )
-        await self._policy.invalidate("report")
-        row = await self._repos.backtest_runs.get(run_id)
-        if row is None:  # pragma: no cover - 创建后必然存在
-            raise NotFoundError(f"回测任务不存在：{run_id}", detail={"run_id": run_id})
         await self._repos.audit_logs.record(
             actor=created_by,
             action="backtest_run",
@@ -203,7 +203,72 @@ class ReportService:
                 "start": start.isoformat(),
                 "end": end.isoformat(),
                 "strategy_id": strategy_id,
-                "status": str(row.status),
+                "status": "running",
             },
         )
+        await self._policy.invalidate("report")
+
+        task = asyncio.create_task(
+            self._execute_backtest(
+                run_id=run_id,
+                start=start,
+                end=end,
+                strategy_cls=strategy_cls,
+                strategy=strategy,
+                strategy_id=strategy_id,
+                params_override=params_override,
+            )
+        )
+        # 持有强引用防任务被 GC（asyncio 只存弱引用）。
+        _BACKTEST_TASKS.add(task)
+        task.add_done_callback(_BACKTEST_TASKS.discard)
+
+        row = await self._repos.backtest_runs.get(run_id)
+        if row is None:  # pragma: no cover - 创建后必然存在
+            raise NotFoundError(f"回测任务不存在：{run_id}", detail={"run_id": run_id})
         return BacktestRunOut.model_validate(row)
+
+    async def _execute_backtest(
+        self,
+        *,
+        run_id: str,
+        start: date,
+        end: date,
+        strategy_cls: Any,
+        strategy: Any,
+        strategy_id: str,
+        params_override: dict[str, Any] | None,
+    ) -> None:
+        """后台执行回测（独立会话；成功/失败均更新任务行并失效缓存）。"""
+        factory = self._session_factory or get_session_factory(get_settings())
+        try:
+            async with factory() as session:
+                repos = Repositories.build(session)
+                resolved = await resolve_params(strategy_cls, cast("StrategyRepos", repos))
+                params = dict(resolved.params)
+                if params_override:
+                    params.update(params_override)
+                resolved_factors = await resolve_factor_params(
+                    strategy.factor_param_ids(), cast("FactorRepos", repos)
+                )
+                factor_params = strategy.build_factor_params(params, resolved_factors)
+                samples = await build_samples(repos, start, end)
+                await run_backtest(
+                    samples,
+                    params,
+                    paths=strategy.build_paths(params),
+                    factor_params=factor_params,
+                    strategy_id=strategy_id,
+                    repos=repos,
+                    run_id=run_id,
+                )
+                await session.commit()
+        except Exception as exc:
+            logger.exception("backtest_background_failed", extra={"run_id": run_id})
+            async with factory() as session:
+                failure_repos = Repositories.build(session)
+                await failure_repos.backtest_runs.update_status(
+                    run_id, "failed", error=f"{type(exc).__name__}: {exc}"
+                )
+                await session.commit()
+        await get_cache_policy().invalidate("report")

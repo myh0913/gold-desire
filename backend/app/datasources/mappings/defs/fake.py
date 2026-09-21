@@ -141,6 +141,36 @@ _NEWS_FLASH = CapabilityMapping(
     ),
 )
 
+_FAKE_MINUTE_BAR = CapabilityMapping(
+    source_id="fake",
+    capability="minute_bars",
+    record_path="points",
+    notes="分时分钟点（fake）：time_label / price / volume(手)；minute_index 派生自序号",
+    fields=(
+        FieldMap("code", None, "identity", context="args.thscode"),
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("minute_index", "@index", "to_int"),
+        FieldMap("time_label", "time_label", "to_str"),
+        FieldMap("price", "price", "to_float"),
+        FieldMap("volume_lots", "volume", "to_int"),
+        FieldMap("amount_yuan", "amount", "to_float", required=False),
+    ),
+)
+
+_FAKE_OPENING_MATCH = CapabilityMapping(
+    source_id="fake",
+    capability="opening_match",
+    record_path="matches",
+    notes="09:25 撮合（fake）：price / volume(手) / time_label",
+    fields=(
+        FieldMap("code", None, "identity", context="args.thscode"),
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("price", "price", "to_float"),
+        FieldMap("volume_lots", "volume", "to_int", required=False),
+        FieldMap("time_label", "time_label", "to_str", required=False),
+    ),
+)
+
 #: fake 源覆盖全部 Phase-1 能力的映射。
 FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _DAILY_BAR,
@@ -151,6 +181,8 @@ FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _THEME_RANK,
     _THEME_STOCK,
     _NEWS_FLASH,
+    _FAKE_MINUTE_BAR,
+    _FAKE_OPENING_MATCH,
 )
 
 

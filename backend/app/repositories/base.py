@@ -15,6 +15,7 @@ SQLite 走 ``sqlite.insert().on_conflict_do_update``，二者语义一致（均�
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from math import ceil
@@ -26,6 +27,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT")
 ItemT = TypeVar("ItemT")
@@ -215,6 +218,11 @@ class BaseRepository:
         )
         insert = _insert_constructor(self.dialect_name())
 
+        # DB 实际影响行数（插入 + 冲突更新）——与返回值 len(materialized) 可能不同
+        # （重复键覆盖时 rowcount 只在部分驱动口径下累计）；排查「任务 rows=N 但
+        # 表里查不到」时先看本日志（docs/bugs-2026-09-21.md Bug #2）。
+        db_rowcount = 0
+
         for chunk in _chunked(materialized, max(1, resolved_chunk)):
             stmt = insert(model).values(list(chunk))
             if resolved_update:
@@ -224,9 +232,19 @@ class BaseRepository:
                 )
             else:  # pragma: no cover - 防御性分支：键即全部列时退化为 DO NOTHING
                 stmt = stmt.on_conflict_do_nothing(index_elements=list(conflict_columns))
-            await self.session.execute(stmt)
+            result = await self.session.execute(stmt)
+            db_rowcount += int(getattr(result, "rowcount", 0) or 0)
 
         await self.session.flush()
+        if db_rowcount != len(materialized):
+            logger.info(
+                "bulk_upsert_rowcount",
+                extra={
+                    "table": getattr(model, "__tablename__", str(model)),
+                    "submitted": len(materialized),
+                    "db_rowcount": db_rowcount,
+                },
+            )
         return len(materialized)
 
 

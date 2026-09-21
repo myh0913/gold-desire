@@ -6,7 +6,10 @@
   ``pool_name='trading_calendar'``）带 TTL；上游失败时回退「周一至五」并告警，绝不崩溃。
 - **窗口**：竞价/盘中/尾盘/盘后四窗口，纯数据（:mod:`app.ingest.windows`），可配置。
 - **幂等状态**：当日「已完成任务」落库（复用 ``pool_snapshot``，
-  ``pool_name='ingest_state:<task>'``）——重启不重跑；失败**不**标记完成，窗口内重试。
+  ``pool_name='ingest_state:<task>'``）——**一次性任务**（``interval<=0``）成功后
+  重启不重跑；**周期任务**（``interval>0``）不受该状态约束，窗口内按间隔重跑
+  （行级由 ``bulk_upsert`` 幂等覆盖写保证安全；进程重启后 ``_last_attempt`` 清空，
+  周期任务下一 tick 即重新到期）；失败**不**标记完成，窗口内重试。
 - **tick 循环**：可配置间隔，SIGTERM/SIGINT 优雅退出。
 - **每日维护**：盘后调用 :func:`app.repositories.retention.run_retention` 并确保未来月分区存在。
 
@@ -284,7 +287,7 @@ class IngestScheduler:
         return [item for item in tasks if item.window is not None and item.window.name == name]
 
     def _interval_due(self, defn: IngestTaskDef, trade_date: date, now: datetime) -> bool:
-        """按 interval 判定是否到期（``interval<=0`` 视为窗口内只跑一次，恒到期）。"""
+        """周期任务（``interval>0``）按间隔判定是否到期（仅被 interval>0 分支调用）。"""
         if defn.interval_seconds <= 0:
             return True
         last = self._last_attempt.get((defn.name, trade_date))
@@ -331,9 +334,14 @@ class IngestScheduler:
                 return executed
 
             for defn in self._select_tasks(window, moment):
-                if await _state_status(repos, defn.name, target_date) == "succeeded":
-                    continue
-                if not self._interval_due(defn, target_date, moment):
+                # 「已完成不重跑」仅约束**一次性任务**（interval<=0）。
+                # 周期任务（interval>0，如 newsflash 60s）成功后仍按间隔重跑，
+                # 不能被 succeeded 状态提前挡掉——否则 interval 配置形同虚设
+                # （Bug #1，docs/bugs-2026-09-21.md：newsflash 整个窗口只跑 1 次）。
+                if defn.interval_seconds <= 0:
+                    if await _state_status(repos, defn.name, target_date) == "succeeded":
+                        continue
+                elif not self._interval_due(defn, target_date, moment):
                     continue
                 result = await run_task(
                     defn,

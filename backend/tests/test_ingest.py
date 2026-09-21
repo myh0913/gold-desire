@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import AsyncIterator, Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
@@ -378,3 +378,99 @@ async def test_run_once_window_filter(factory: async_sessionmaker[AsyncSession])
         capabilities = set((await session.execute(select(IngestJob.capability))).scalars().all())
     assert capabilities == {"theme_rank", "theme_stocks"}
     assert "daily_bars" not in capabilities
+
+
+# ============================================================ 8. 周期任务重跑（Bug #1 回归）
+
+
+async def test_interval_task_reruns_after_success_within_window(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """回归 Bug #1（docs/bugs-2026-09-21.md）：interval>0 任务成功后按间隔重跑。
+
+    历史缺陷：``run_once`` 先判 ``_state_status == succeeded`` 再判 interval，
+    newsflash 09:26 成功后被 succeeded 状态永久跳过——整个 intraday 窗口
+    只跑 1 次，interval_seconds=60 形同虚设。
+    """
+    provider = RecordingProvider()
+    settings = get_settings()
+    clock = {"now": datetime(2026, 9, 18, 9, 26, 2, tzinfo=SH)}
+    sched = IngestScheduler(
+        settings, session_factory=factory, provider_override=provider, now_fn=lambda: clock["now"]
+    )
+
+    first = await sched.run_once(window="intraday")
+    assert [result.task for result in first] == ["newsflash"]
+    assert first[0].status == "succeeded"
+
+    # +30s：未到 60s 间隔 → 不跑
+    clock["now"] = clock["now"] + timedelta(seconds=30)
+    assert await sched.run_once(window="intraday") == []
+
+    # +61s：到期 → 重跑（即便上次已 succeeded）
+    clock["now"] = clock["now"] + timedelta(seconds=31)
+    again = await sched.run_once(window="intraday")
+    assert [result.task for result in again] == ["newsflash"]
+    assert again[0].status == "succeeded"
+
+    # 一次性任务（limit_up_pool）语义不变：成功后同窗口不重跑
+    morning = datetime(2026, 9, 18, 9, 30, tzinfo=SH)
+    clock["now"] = morning
+    oneshot = IngestScheduler(
+        settings, session_factory=factory, provider_override=provider, now_fn=lambda: clock["now"]
+    )
+    assert [r.task for r in await oneshot.run_once(window="auction")] == ["limit_up_pool"]
+    assert await oneshot.run_once(window="auction") == []
+
+
+async def test_interval_task_survives_scheduler_restart(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """周期任务不受「当日已完成」状态约束：重启（新调度器实例）后下一 tick 即重跑。"""
+    provider = RecordingProvider()
+    settings = get_settings()
+    moment = datetime(2026, 9, 18, 9, 26, 2, tzinfo=SH)
+    first_sched = IngestScheduler(
+        settings, session_factory=factory, provider_override=provider, now_fn=lambda: moment
+    )
+    await first_sched.run_once(window="intraday")
+
+    # 模拟 worker 重启：全新实例（_last_attempt 为空），同一时刻重启
+    restarted = IngestScheduler(
+        settings, session_factory=factory, provider_override=provider, now_fn=lambda: moment
+    )
+    results = await restarted.run_once(window="intraday")
+    assert [result.task for result in results] == ["newsflash"]
+
+
+# ============================================================ 9. 快讯落库（Bug #2 回归）
+
+
+async def test_newsflash_rows_land_in_db_and_queryable(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """回归 Bug #2（docs/bugs-2026-09-21.md）：newsflash 任务 rows 与表内行数一致。
+
+    ``run_task`` 的 news_flash 写入与 ``ingest_jobs`` 留痕在同一事务，随
+    ``run_once`` 的 ``session.commit()`` 一并持久化；任务报 succeeded rows=N
+    时，``news_flash`` 表必然可查到这 N 行（重跑覆盖写不重复计行）。
+    """
+    provider = RecordingProvider()
+    settings = get_settings()
+    sched = IngestScheduler(
+        settings,
+        session_factory=factory,
+        provider_override=provider,
+        now_fn=lambda: datetime(2026, 9, 18, 9, 26, 2, tzinfo=SH),
+    )
+    results = await sched.run_once(window="intraday")
+    newsflash = next(result for result in results if result.task == "newsflash")
+    assert newsflash.status == "succeeded"
+
+    async with factory() as session:
+        repos = Repositories.build(session)
+        rows = await repos.news_flash.list_recent(limit=100)
+    assert len(rows) == newsflash.rows
+    assert rows == sorted(rows, key=lambda row: row.ts, reverse=True)
+    # 注：PG 侧 ts 列为 timestamptz、写入值为上海时区 aware datetime（绝对时间正确）；
+    # SQLite 测试库回读丢失 tzinfo，故此处不断言 tzinfo。

@@ -4,7 +4,7 @@
  * 泛型用函数声明（而非箭头函数）书写，避免 .tsx 下的泛型解析歧义。
  */
 
-import type { ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { EmptyState, ErrorState, LoadingState } from './StateViews';
@@ -32,6 +32,16 @@ export interface DataTableProps<T> {
   pageSize?: number;
   total?: number;
   onPageChange?: (page: number) => void;
+  /**
+   * 可选：为每行渲染**可展开详情**。提供后表格末尾自动追加「详情」列，
+   * 展开时插入一整行（``colSpan`` 覆盖全部列）承载详情内容。
+   *
+   * 缺省不传时表格行为与结构完全不变（向后兼容）。展开状态按 ``rowKey`` 记忆，
+   * 同一时刻只展开一行。
+   */
+  renderDetail?: (row: T, index: number) => ReactNode;
+  /** 详情列的表头文案（缺省「详情」） */
+  detailHeader?: ReactNode;
   className?: string;
 }
 
@@ -54,8 +64,12 @@ export function DataTable<T>({
   pageSize,
   total,
   onPageChange,
+  renderDetail,
+  detailHeader = '详情',
   className,
 }: DataTableProps<T>) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
   if (loading) return <LoadingState className={className} />;
   if (error !== undefined && error !== null) {
     return <ErrorState error={error} onRetry={onRetry} className={className} />;
@@ -71,6 +85,8 @@ export function DataTable<T>({
   const currentPage = page ?? 1;
   const totalPages = pageSize ? Math.max(1, Math.ceil((total ?? list.length) / pageSize)) : 1;
   const pagerVisible = pageSize !== undefined && total !== undefined && onPageChange !== undefined;
+  const columnCount = columns.length + (renderDetail ? 1 : 0);
+  const expandable = renderDetail !== undefined;
 
   return (
     <div className={cn('space-y-3', className)}>
@@ -91,25 +107,55 @@ export function DataTable<T>({
                   {column.header}
                 </th>
               ))}
+              {expandable && (
+                <th scope="col" className="w-20 px-3 py-2 text-center font-medium">
+                  {detailHeader}
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
-            {list.map((row, index) => (
-              <tr key={rowKey(row, index)} className="hover:bg-muted/30 border-t transition-colors">
-                {columns.map((column) => (
-                  <td
-                    key={column.key}
-                    className={cn(
-                      'px-3 py-2',
-                      ALIGN_CLASS[column.align ?? 'left'],
-                      column.className,
+            {list.map((row, index) => {
+              const key = rowKey(row, index);
+              const isOpen = expandable && expandedKey === key;
+              return (
+                <Fragment key={key}>
+                  <tr className="hover:bg-muted/30 border-t transition-colors">
+                    {columns.map((column) => (
+                      <td
+                        key={column.key}
+                        className={cn(
+                          'px-3 py-2',
+                          ALIGN_CLASS[column.align ?? 'left'],
+                          column.className,
+                        )}
+                      >
+                        {column.render(row, index)}
+                      </td>
+                    ))}
+                    {expandable && (
+                      <td className="px-3 py-2 text-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-expanded={isOpen}
+                          onClick={() => setExpandedKey(isOpen ? null : key)}
+                        >
+                          {isOpen ? '收起' : '展开'}
+                        </Button>
+                      </td>
                     )}
-                  >
-                    {column.render(row, index)}
-                  </td>
-                ))}
-              </tr>
-            ))}
+                  </tr>
+                  {isOpen && renderDetail && (
+                    <tr className="bg-muted/20 border-t">
+                      <td colSpan={columnCount} className="px-3 py-3">
+                        {renderDetail(row, index)}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

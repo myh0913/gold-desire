@@ -65,7 +65,20 @@ export interface DatesResponse {
 
 // --------------------------------------------------------------- 涨停池
 
-/** 涨停池成分（`turnover_rate` 小数口径）。 */
+/** 关联板块（涨停原因所属题材）。 */
+export interface PoolPlate {
+  plate_id?: number | null;
+  plate_name?: string | null;
+}
+
+/** 封板时间线单点（status: 1 封涨停 / 2 炸板 / 3 封跌停 / 4 开跌停）。 */
+export interface PoolTimelinePoint {
+  /** Unix 秒 */
+  timestamp: number;
+  status: number;
+}
+
+/** 涨停池成分（`turnover_rate` / `change_pct` / `seal_ratio` 小数口径）。 */
 export interface PoolOut {
   trade_date: string;
   code: string;
@@ -76,7 +89,25 @@ export interface PoolOut {
   open_times: number | null;
   turnover_rate: number | null;
   amount_yuan: number | null;
+  /** 总市值（元） */
   market_cap_yuan: number | null;
+  /** 现价（元） */
+  price: number | null;
+  /** 涨跌幅（小数，0.1001 = +10.01%） */
+  change_pct: number | null;
+  /** 量比 */
+  volume_bias_ratio: number | null;
+  /** 流通市值（元） */
+  free_cap_yuan: number | null;
+  /** 封单比（小数） */
+  seal_ratio: number | null;
+  /** 涨停原因（上游口语化说明） */
+  reason: string | null;
+  /** 关联板块 */
+  plates: PoolPlate[] | null;
+  /** 封板时间线 */
+  timeline: PoolTimelinePoint[] | null;
+  /** 池型（对齐上游 pool_name，共 7 种） */
   pool_type: string;
 }
 

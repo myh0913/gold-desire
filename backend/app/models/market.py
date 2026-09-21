@@ -239,6 +239,46 @@ class MarketSentiment(SourceMixin, Base):
     )
 
 
+class CycleJudgement(SourceMixin, Base):
+    """情绪周期判定（每交易日一行；由情绪指标 + 涨停池**派生**，非上游字段）。
+
+    口径照搬参考实现 `quant-system/src/quant_system/cycle.py`（用户 2026-09-07 确认
+    的阈值集，见 ``app.services.cycle.CycleThresholds``）。六态取值与
+    :class:`app.strategies.protocol.CycleState` 一致。
+    """
+
+    __tablename__ = "cycle_judgements"
+    __table_args__ = (
+        UniqueConstraint("trade_date", name="uq_cycle_judgements_trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True, doc="交易日")
+    state: Mapped[str] = mapped_column(String(16), nullable=False, doc="周期态（六态之一）")
+    reasons: Mapped[list[str]] = mapped_column(JsonType, nullable=False, doc="判定依据列表")
+    indicators: Mapped[dict[str, Any]] = mapped_column(
+        JsonType, nullable=False, doc="判定所用指标快照"
+    )
+    overheated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, doc="是否过热（仓位减半提示）"
+    )
+    relaxed_needs_confirm: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        doc="放宽类状态（修复/加速）首次出现，建议次日复认",
+    )
+    data_degraded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, doc="关键指标缺失，判定可信度降级"
+    )
+    position_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 3), nullable=True, doc="仓位门控因子；策略未声明时为 NULL"
+    )
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, doc="判定时刻"
+    )
+
+
 # --------------------------------------------------------------------------- 资讯 / 主题
 
 

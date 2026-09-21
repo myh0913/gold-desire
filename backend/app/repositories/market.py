@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import delete, func, or_, select, update
 
 from app.models.market import (
+    CycleJudgement,
     DailyBar,
     LadderRow,
     LimitUpPool,
@@ -56,6 +57,19 @@ _LIMIT_UP_UPDATE = (
 )
 _POOL_SNAPSHOT_CONFLICT = ("trade_date", "pool_name")
 _POOL_SNAPSHOT_UPDATE = ("payload", "source")
+_CYCLE_CONFLICT = ("trade_date",)
+_CYCLE_UPDATE = (
+    "state",
+    "reasons",
+    "indicators",
+    "overheated",
+    "relaxed_needs_confirm",
+    "data_degraded",
+    "position_factor",
+    "ran_at",
+    "source",
+)
+
 _SENTIMENT_CONFLICT = ("trade_date",)
 _SENTIMENT_UPDATE = (
     "temperature",
@@ -510,6 +524,36 @@ class MonitorStockRepository(BaseRepository):
         stmt = stmt.order_by(MonitorStock.code)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+
+class CycleJudgementRepository(BaseRepository):
+    """情绪周期判定仓储（每交易日一行，**派生**数据）。"""
+
+    async def upsert_one(self, row: Mapping[str, Any]) -> int:
+        """按 ``trade_date`` 幂等覆盖写入判定（同日重跑只留最新一次）。"""
+        return await self.bulk_upsert(
+            CycleJudgement, [row], _CYCLE_CONFLICT, _CYCLE_UPDATE
+        )
+
+    async def get(self, trade_date: date) -> CycleJudgement | None:
+        """取某交易日判定。"""
+        stmt = select(CycleJudgement).where(CycleJudgement.trade_date == trade_date)
+        return await self.session.scalar(stmt)
+
+    async def latest(self) -> CycleJudgement | None:
+        """取最新一条判定（供「昨日态 → relaxed_needs_confirm」比对）。"""
+        stmt = select(CycleJudgement).order_by(CycleJudgement.trade_date.desc()).limit(1)
+        return await self.session.scalar(stmt)
+
+    async def previous_state(self, trade_date: date) -> str | None:
+        """取 ``trade_date`` **之前**最近的周期态（无历史为 ``None``）。"""
+        stmt = (
+            select(CycleJudgement.state)
+            .where(CycleJudgement.trade_date < trade_date)
+            .order_by(CycleJudgement.trade_date.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)
 
 
 class LadderRepository(BaseRepository):

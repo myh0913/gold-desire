@@ -200,6 +200,29 @@ class SentimentOut(BaseModel):
     premium_rate: float
 
 
+class CycleOut(BaseModel):
+    """情绪周期判定（派生数据，口径照搬用户确认过的参考实现）。"""
+
+    model_config = _ORM
+
+    trade_date: date
+    state: str = Field(description="周期态（冰点/冰点转折/修复/加速·高潮/分歧/退潮）")
+    reasons: list[str] = Field(default_factory=list, description="判定依据")
+    indicators: dict[str, Any] = Field(default_factory=dict, description="判定所用指标快照")
+    overheated: bool = False
+    relaxed_needs_confirm: bool = False
+    data_degraded: bool = False
+    position_factor: float | None = None
+    ran_at: datetime | None = None
+
+
+class CycleResponse(MarketMeta):
+    """某交易日情绪周期判定。"""
+
+    trade_date: date | None = None
+    item: CycleOut | None = None
+
+
 class SentimentResponse(MarketMeta):
     """某交易日情绪指标。"""
 

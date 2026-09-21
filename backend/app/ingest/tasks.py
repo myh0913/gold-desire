@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -29,6 +30,8 @@ from app.core.timeutil import date_ms, day_end_ms
 from app.datasources.contracts import ContractModel
 from app.ingest.windows import Window
 from app.repositories import Repositories
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_TASKS",
@@ -139,6 +142,41 @@ async def _replace_theme_stocks(
     return total
 
 
+async def _write_market_sentiment_with_cycle(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """情绪指标：写入后**随即判定情绪周期并落库**。
+
+    周期（六态 / 依据 / 指标 / 过热 / 仓位因子）是情绪指标 + 涨停池的**派生**结果，
+    与情绪指标同窗口同节拍，保证总览页看到的两者同一时刻口径。参考实现是让独立
+    pipeline 每轮算一次并落报告文件；这里落在同一步，避免多一个调度任务。
+
+    判定失败**不阻断**情绪写入（本任务主职责是落情绪指标），但会记完整堆栈——
+    周期缺失时总览显示「暂无周期数据」，不会静默糊过去。
+    """
+    from app.services.cycle import CycleService
+
+    written = await _write_market_sentiment(repos, rows, trade_date, source)
+    try:
+        judgement = await CycleService(repos).judge(trade_date)
+    except Exception:
+        logger.exception(
+            "cycle_judge_failed",
+            extra={"trade_date": trade_date.isoformat(), "task": "market_sentiment"},
+        )
+    else:
+        logger.info(
+            "cycle_judged",
+            extra={
+                "trade_date": trade_date.isoformat(),
+                "state": judgement.state.value,
+                "overheated": judgement.overheated,
+                "data_degraded": judgement.data_degraded,
+            },
+        )
+    return written
+
+
 async def _write_newsflash(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
@@ -220,6 +258,7 @@ WRITERS: dict[str, WriterFn] = {
     "limit_up_pool_replace": _replace_limit_up_pool,
     "ladder": _write_ladder,
     "market_sentiment": _write_market_sentiment,
+    "market_sentiment_cycle": _write_market_sentiment_with_cycle,
     "theme_rank_replace": _replace_theme_rank,
     "theme_stocks_replace": _replace_theme_stocks,
     "newsflash": _write_newsflash,
@@ -506,7 +545,7 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
     IngestTaskDef(
         name="market_sentiment",
         capability="market_sentiment",
-        target="market_sentiment",
+        target="market_sentiment_cycle",
         # 交易时段每 10 分钟一轮：上游返回当日分钟级情绪序列，取最新点入当日行。
         window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
         interval_seconds=600,

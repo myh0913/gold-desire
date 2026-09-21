@@ -37,6 +37,7 @@ from app.repositories.derived import (
     IngestJobRepository,
 )
 from app.repositories.market import (
+    CycleJudgementRepository,
     DailyBarRepository,
     LadderRepository,
     LimitUpPoolRepository,
@@ -98,6 +99,7 @@ class Repositories:
     limit_up_pool: LimitUpPoolRepository
     pool_snapshot: PoolSnapshotRepository
     market_sentiment: MarketSentimentRepository
+    cycle_judgements: CycleJudgementRepository
     news_flash: NewsFlashRepository
     themes: ThemeRepository
     monitor_stocks: MonitorStockRepository
@@ -128,6 +130,7 @@ class Repositories:
             limit_up_pool=LimitUpPoolRepository(session),
             pool_snapshot=PoolSnapshotRepository(session),
             market_sentiment=MarketSentimentRepository(session),
+            cycle_judgements=CycleJudgementRepository(session),
             news_flash=NewsFlashRepository(session),
             themes=ThemeRepository(session),
             monitor_stocks=MonitorStockRepository(session),

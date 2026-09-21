@@ -31,6 +31,28 @@ const HISTORY = {
   ],
 };
 
+/** 情绪周期判定响应（派生数据）。 */
+const CYCLE = {
+  trade_date: '2026-09-21',
+  state: '加速/高潮',
+  reasons: ['温度73≥60 + 晋级27%≥25% + 高度5≥5'],
+  indicators: {
+    temperature: 72.5293,
+    limit_up_count: 103,
+    limit_down_count: 3,
+    break_ratio: 0.2015,
+    promotion_rate: 0.2658,
+    board_height: 5,
+    leader_name: '华瓷股份',
+    leader_limit_down: false,
+  },
+  overheated: false,
+  relaxed_needs_confirm: true,
+  data_degraded: false,
+  position_factor: 1,
+  ran_at: '2026-09-21T12:07:43Z',
+};
+
 function renderOverview() {
   const { Wrapper } = createQueryWrapper();
   return render(
@@ -46,6 +68,13 @@ describe('OverviewPage', () => {
     mockFetch((url) => {
       if (url.startsWith('/api/sentiment/history')) {
         return { body: { stale: false, data_date: '2026-09-18', ...HISTORY } };
+      }
+      if (url.startsWith('/api/cycle')) {
+        return { body: { stale: false, data_date: '2026-09-21', trade_date: '2026-09-21', item: CYCLE } };
+      }
+      if (url.startsWith('/api/review/dates')) {
+        // 无复盘报告 → 「昨日建议表现」卡按设计不渲染。
+        return { body: { dates: [], limit: 30 } };
       }
       if (url.startsWith('/api/sentiment')) {
         return { body: { stale: false, data_date: '2026-09-18', trade_date: '2026-09-18', item: SENTIMENT } };
@@ -85,6 +114,32 @@ describe('OverviewPage', () => {
     expect(screen.getByText('涨跌停 · 炸板')).toBeInTheDocument();
     expect(screen.getByText('上涨 · 下跌家数')).toBeInTheDocument();
     expect(screen.getByText('近 20 个交易日情绪走势')).toBeInTheDocument();
+  });
+
+  it('渲染情绪周期卡（六态 + 依据 + 指标 + 仓位因子）', async () => {
+    renderOverview();
+
+    const card = await screen.findByTestId('cycle-status-card');
+    expect(card).toHaveTextContent('情绪周期');
+    expect(card).toHaveTextContent('加速/高潮');
+    expect(card).toHaveTextContent('仓位因子 1 · 正常仓位');
+    expect(card).toHaveTextContent('次日复认');
+    expect(card).toHaveTextContent('温度73≥60 + 晋级27%≥25% + 高度5≥5');
+    expect(card).toHaveTextContent('温度 72.5');
+    expect(card).toHaveTextContent('涨停家数 103');
+    expect(card).toHaveTextContent('跌停家数 3');
+    expect(card).toHaveTextContent('炸板率 20.15%');
+    expect(card).toHaveTextContent('晋级率 26.58%');
+    expect(card).toHaveTextContent('高度 5板');
+    expect(card).toHaveTextContent('华瓷股份');
+  });
+
+  it('无复盘报告时不渲染「昨日建议表现」卡', async () => {
+    renderOverview();
+
+    // 等情绪卡出现（查询已落定），再断言复盘卡缺席。
+    await screen.findByTestId('cycle-status-card');
+    expect(screen.queryByTestId('yesterday-review-card')).not.toBeInTheDocument();
   });
 
   it('stale: true 时展示陈旧数据横幅', async () => {

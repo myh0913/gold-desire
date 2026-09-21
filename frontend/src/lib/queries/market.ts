@@ -7,13 +7,24 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { marketApi } from '@/lib/api';
-import type { SentimentHistoryResponse, SentimentResponse } from '@/types/market';
+import type { CycleResponse, SentimentHistoryResponse, SentimentResponse } from '@/types/market';
 
 /** 行情域查询键工厂。 */
 export const marketKeys = {
   sentiment: ['market', 'sentiment'] as const,
+  cycle: ['market', 'cycle'] as const,
   sentimentHistory: (days: number) => ['market', 'sentiment', 'history', days] as const,
 };
+
+/** 情绪周期判定（派生数据；随情绪采集同节拍刷新）。 */
+export function useCycleQuery(): UseQueryResult<CycleResponse> {
+  return useQuery<CycleResponse>({
+    queryKey: marketKeys.cycle,
+    queryFn: ({ signal }) => marketApi.cycle({}, signal),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
 
 /** 最新（或指定日）情绪指标。 */
 export function useSentimentQuery(): UseQueryResult<SentimentResponse> {

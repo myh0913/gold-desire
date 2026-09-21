@@ -16,6 +16,7 @@ from app.models.auth import User
 from app.repositories import Repositories, get_repositories
 from app.schemas.common import DatesResponse, MarketPageResponse, PageResponse
 from app.schemas.market import (
+    CycleResponse,
     DailyBarsResponse,
     LadderMatrixResponse,
     LadderRowOut,
@@ -152,6 +153,20 @@ async def get_ladder_dates(
 ) -> DatesResponse:
     """可取的天梯交易日列表（去重倒序）。"""
     return await service.ladder_dates(limit)
+
+
+@router.get("/cycle", response_model=CycleResponse)
+async def get_cycle(
+    date_: date | None = Query(default=None, alias="date"),
+    _: User = Depends(require_page(PageKey.OVERVIEW)),
+    service: MarketService = Depends(get_market_service),
+) -> CycleResponse:
+    """取某交易日情绪周期判定（缺省取库中最新）。
+
+    判定为**派生**数据（情绪指标 + 涨停池算出后落库），与情绪采集同节拍刷新；
+    库中尚无判定时 ``item`` 为 ``null``。
+    """
+    return await service.cycle(date_)
 
 
 @router.get("/sentiment", response_model=SentimentResponse)

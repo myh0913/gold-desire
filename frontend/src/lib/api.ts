@@ -54,6 +54,7 @@ import type {
   NewsFlashPage,
   PoolsResponse,
   PoolResponse,
+  CycleResponse,
   SentimentHistoryResponse,
   SentimentResponse,
   ThemeStocksResponse,
@@ -296,6 +297,9 @@ export const configApi = {
 /** 行情读端点（总览 + Phase 2 各页）。 */
 export const marketApi = {
   sentiment: (signal?: AbortSignal) => request<SentimentResponse>('/sentiment', { signal }),
+  /** 情绪周期判定（派生数据；缺省取库中最新）。 */
+  cycle: (params: { date?: string }, signal?: AbortSignal) =>
+    request<CycleResponse>('/cycle', { params, signal }),
   sentimentHistory: (days: number, signal?: AbortSignal) =>
     request<SentimentHistoryResponse>('/sentiment/history', { params: { days }, signal }),
   pools: (params: { date?: string }, signal?: AbortSignal) =>

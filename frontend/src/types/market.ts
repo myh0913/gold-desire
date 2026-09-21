@@ -41,6 +41,32 @@ export interface SentimentResponse extends MarketMeta {
   item: SentimentOut | null;
 }
 
+/** 情绪周期判定（后端**派生**数据：由情绪指标 + 涨停池算出）。 */
+export interface CycleOut {
+  trade_date: string;
+  /** 周期态：冰点 / 冰点转折 / 修复 / 加速·高潮 / 分歧 / 退潮 */
+  state: string;
+  /** 判定依据 */
+  reasons: string[];
+  /** 判定所用指标快照 */
+  indicators: Record<string, number | string | boolean | null>;
+  /** 过热（仓位减半提示） */
+  overheated: boolean;
+  /** 放宽类状态（修复/加速）首次出现，建议次日复认 */
+  relaxed_needs_confirm: boolean;
+  /** 关键指标缺失，判定可信度降级 */
+  data_degraded: boolean;
+  /** 仓位门控因子；策略未声明时为 null */
+  position_factor: number | null;
+  ran_at: string | null;
+}
+
+/** 某交易日情绪周期判定。 */
+export interface CycleResponse extends MarketMeta {
+  trade_date: string | null;
+  item: CycleOut | null;
+}
+
 /** 最近 N 个交易日情绪（按交易日升序）。 */
 export interface SentimentHistoryResponse extends MarketMeta {
   days: number;

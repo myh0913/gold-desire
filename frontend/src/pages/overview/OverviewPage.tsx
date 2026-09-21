@@ -9,9 +9,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { AlertBanner } from '@/components/common/AlertBanner';
 import { ConnectionStatus } from '@/components/common/ConnectionStatus';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateViews';
-import { useSentimentHistoryQuery, useSentimentQuery } from '@/lib/queries/market';
+import { useCycleQuery, useSentimentHistoryQuery, useSentimentQuery } from '@/lib/queries/market';
 import { fmtDate } from '@/lib/time';
+import { CycleStatusCard } from './components/CycleStatusCard';
 import { ObservationNotes } from './components/ObservationNotes';
+import { YesterdayReviewCard } from './components/YesterdayReviewCard';
 import { SentimentGauge } from './components/SentimentGauge';
 import { SentimentHistoryChart } from './components/SentimentHistoryChart';
 import { StatCards } from './components/StatCards';
@@ -20,6 +22,7 @@ import { useSentimentStream } from './hooks/useSentimentStream';
 export default function OverviewPage() {
   const sentiment = useSentimentQuery();
   const history = useSentimentHistoryQuery(20);
+  const cycle = useCycleQuery();
   const { alerts, dismissAlert } = useSentimentStream();
 
   const item = sentiment.data?.item ?? null;
@@ -55,6 +58,10 @@ export default function OverviewPage() {
           onDismiss={() => dismissAlert(index)}
         />
       ))}
+
+      <CycleStatusCard cycle={cycle.data?.item ?? null} />
+
+      <YesterdayReviewCard />
 
       {sentiment.isPending ? (
         <LoadingState title="加载情绪指标…" />

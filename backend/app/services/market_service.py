@@ -15,6 +15,7 @@ from datetime import date
 
 from app.core.errors import NotFoundError
 from app.models.market import (
+    CycleJudgement,
     DailyBar,
     LadderRow,
     LimitUpPool,
@@ -28,6 +29,8 @@ from app.repositories import Repositories
 from app.repositories.reads import ReadRepository
 from app.schemas.common import DatesResponse, MarketPageResponse, PageResponse
 from app.schemas.market import (
+    CycleOut,
+    CycleResponse,
     DailyBarOut,
     DailyBarsResponse,
     LadderCellOut,
@@ -318,6 +321,27 @@ class MarketService:
         )
 
     # ------------------------------------------------------------------ 情绪
+
+    async def cycle(self, on_date: date | None) -> CycleResponse:
+        """取某交易日情绪周期判定（缺省取库中最新）。
+
+        判定是**派生**数据（由情绪指标 + 涨停池算出并落库），随情绪采集任务同节拍
+        刷新（交易时段每 10 分钟）。库中尚无判定时 ``item`` 为 ``null``。
+        """
+        stale, data_date = await market_freshness(self._read, CycleJudgement)
+        row = (
+            await self._repos.cycle_judgements.get(on_date)
+            if on_date is not None
+            else await self._repos.cycle_judgements.latest()
+        )
+        if row is None:
+            return CycleResponse(stale=True, data_date=data_date)
+        return CycleResponse(
+            stale=stale,
+            data_date=row.trade_date,
+            trade_date=row.trade_date,
+            item=CycleOut.model_validate(row),
+        )
 
     async def sentiment(self, on_date: date | None) -> SentimentResponse:
         """取某交易日情绪指标（``date`` 缺省用库中最新）。"""

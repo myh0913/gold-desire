@@ -196,7 +196,6 @@ export interface LadderPage extends PageMeta, MarketMeta {
 /** 7×24 快讯。 */
 export interface NewsFlashOut {
   ts: string;
-  level: string | null;
   title: string;
   summary: string | null;
   symbols: string[];

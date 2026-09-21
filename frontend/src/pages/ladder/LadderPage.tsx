@@ -256,13 +256,16 @@ export default function LadderPage() {
                             cell.firstSeal === '99:99' ? '--' : cell.firstSeal
                           }`}
                           className={cn(
-                            'w-full rounded px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent',
+                            'flex w-full items-baseline justify-between gap-1 rounded px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent',
                             highlighted && 'bg-accent ring-1 ring-ring',
                           )}
                         >
-                          <span className="block truncate">{cell.name}</span>
+                          <span className="min-w-0 flex-1 truncate">{cell.name}</span>
                           <span
-                            className={cn('font-mono text-[10px]', boardToneClass(cell.boards))}
+                            className={cn(
+                              'shrink-0 whitespace-nowrap font-mono text-[10px]',
+                              boardToneClass(cell.boards),
+                            )}
                           >
                             {cell.boards} 板
                           </span>

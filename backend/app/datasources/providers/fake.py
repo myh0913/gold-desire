@@ -123,7 +123,6 @@ def default_payloads() -> dict[str, Any]:
             "messages": [
                 {
                     "created_at_ms": 1789784100000,
-                    "level": "A",
                     "title": "算力需求超预期",
                     "digest": "多家公司上调全年指引",
                     "stock_symbols": ["600519.SS", "000001.SZ"],

@@ -456,7 +456,6 @@ async def test_news_flash_keyword_searches_title_and_summary(session: AsyncSessi
         [
             {
                 "ts": base_ts,
-                "level": "high",
                 "title": "涨停潮来袭",
                 "summary": "多股封板",
                 "symbols": ["000001"],
@@ -465,7 +464,6 @@ async def test_news_flash_keyword_searches_title_and_summary(session: AsyncSessi
             },
             {
                 "ts": base_ts + timedelta(minutes=5),
-                "level": "normal",
                 "title": "公司公告",
                 "summary": "拟进行重大资产重组",
                 "symbols": ["000002"],
@@ -474,7 +472,6 @@ async def test_news_flash_keyword_searches_title_and_summary(session: AsyncSessi
             },
             {
                 "ts": base_ts + timedelta(minutes=10),
-                "level": "normal",
                 "title": "无关资讯",
                 "summary": "天气晴朗",
                 "symbols": [],
@@ -492,9 +489,6 @@ async def test_news_flash_keyword_searches_title_and_summary(session: AsyncSessi
     by_summary = await repo.list_recent(10, keyword="重组")
     assert len(by_summary) == 1
     assert by_summary[0].symbols == ["000002"]
-
-    by_level = await repo.list_recent(10, level="high")
-    assert len(by_level) == 1
 
     assert len(await repo.list_recent(10)) == 3
 

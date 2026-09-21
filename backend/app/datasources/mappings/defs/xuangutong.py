@@ -134,11 +134,10 @@ _NEWS_FLASH = CapabilityMapping(
     source_id="xuangutong",
     capability="newsflash",
     record_path="data.messages",
-    notes="快讯：created_at(秒) / impact(int) / stocks[].symbol 关联证券 / subj_ids 分类；"
-    "摘要常为空串（保持空串而非拒绝记录）",
+    notes="快讯：created_at(秒) / stocks[].symbol 关联证券 / subj_ids 分类；"
+    "摘要常为空串（保持空串而非拒绝记录）。源不提供重要级别（impact 实测恒为 0），不映射",
     fields=(
         FieldMap("ts", "created_at", "sec_to_datetime"),
-        FieldMap("level", "impact", "to_str", required=False),
         FieldMap("title", "title", "to_str"),
         FieldMap("summary", "summary", "to_str", default=""),
         FieldMap("symbols", "stocks[].symbol", "list_of_str", required=False),

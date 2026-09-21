@@ -287,7 +287,6 @@ class NewsFlashOut(BaseModel):
     model_config = _ORM
 
     ts: datetime
-    level: str | None = None
     title: str
     summary: str | None = None
     symbols: list[str] = Field(default_factory=list)

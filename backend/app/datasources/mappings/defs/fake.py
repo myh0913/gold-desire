@@ -133,7 +133,6 @@ _NEWS_FLASH = CapabilityMapping(
     notes="快讯：created_at_ms / digest / stock_symbols / tags",
     fields=(
         FieldMap("ts", "created_at_ms", "ms_to_datetime"),
-        FieldMap("level", "level", "to_str"),
         FieldMap("title", "title", "to_str"),
         FieldMap("summary", "digest", "to_str"),
         FieldMap("symbols", "stock_symbols", "list_of_str"),

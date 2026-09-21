@@ -441,7 +441,6 @@ class MarketService:
     async def newsflash(
         self,
         *,
-        level: str | None,
         keyword: str | None,
         page: int,
         page_size: int | None,
@@ -449,12 +448,12 @@ class MarketService:
         """分页检索快讯（按发布时间倒序）。"""
         key = query_key(
             "newsflash",
-            {"level": level, "kw": keyword, "page": page, "size": page_size},
+            {"kw": keyword, "page": page, "size": page_size},
         )
 
         async def loader() -> MarketPageResponse[NewsFlashOut]:
             result = await self._read.paginate_news(
-                level=level, keyword=keyword, page=page, page_size=page_size
+                keyword=keyword, page=page, page_size=page_size
             )
             stale, data_date = await market_freshness(self._read, NewsFlash, date_column=None)
             return MarketPageResponse[NewsFlashOut](

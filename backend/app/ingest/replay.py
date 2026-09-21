@@ -159,7 +159,6 @@ def _news(row: NewsFlash) -> NewsFlashContract:
     """ORM 快讯行 → 契约。"""
     return NewsFlashContract(
         ts=row.ts,
-        level=row.level,
         title=row.title,
         summary=row.summary or "",
         symbols=list(row.symbols or []),

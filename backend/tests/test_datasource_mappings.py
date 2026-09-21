@@ -272,12 +272,11 @@ async def test_xuangutong_theme_rank_and_stocks() -> None:
 
 
 async def test_xuangutong_newsflash() -> None:
-    """快讯：秒→aware datetime、整数级别转字符串、关联证券列表、分类 id 列表。"""
+    """快讯：秒→aware datetime、关联证券列表、分类 id 列表。"""
     rows, _ = await fetch_rows("xuangutong", "newsflash", limit=20)
     assert len(rows) == 3
     news = rows[0]
     assert news.ts == datetime(2026, 9, 19, 9, 11, 32, tzinfo=SH)  # sec_to_datetime
-    assert news.level == "2"  # impact 整数 → 字符串
     assert news.title == "商务部新闻发言人就中美经贸磋商有关问题答记者问"
     assert news.symbols == []  # stocks 为空
     assert news.categories == ["457", "9", "10"]

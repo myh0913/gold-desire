@@ -1,13 +1,14 @@
 /**
- * 7×24 快讯页：级别过滤 + 关键词检索 + 分页；WS `pool`/采集事件触发自动失效（总览订阅共用）。
+ * 7×24 快讯页：关键词检索 + 分页；WS `newsflash`/采集事件触发自动失效。
+ *
+ * 不展示「级别」也不按级别筛选：数据源 newsflash 接口的 `impact` 实测恒为 0
+ * （259 条样本无一例外），级别字段没有可用取值。
  */
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
 import { StaleNotice } from '@/components/common/StaleNotice';
 import { useChannelRefresh } from '@/hooks/useChannelRefresh';
@@ -17,29 +18,12 @@ import type { NewsFlashOut } from '@/types/market';
 
 const PAGE_SIZE = 20;
 
-const LEVEL_LABEL: Record<string, string> = { high: '重要', mid: '一般', low: '低' };
-
-function levelVariant(level: string | null): 'up' | 'secondary' | 'outline' {
-  if (level === 'high') return 'up';
-  if (level === 'mid') return 'secondary';
-  return 'outline';
-}
-
 const columns: DataTableColumn<NewsFlashOut>[] = [
   {
     key: 'ts',
     header: '时间',
     render: (row) => (
-      <span className="text-muted-foreground tabular-nums text-xs">
-        {fmtDateTime(row.ts)}
-      </span>
-    ),
-  },
-  {
-    key: 'level',
-    header: '级别',
-    render: (row) => (
-      <Badge variant={levelVariant(row.level)}>{LEVEL_LABEL[row.level ?? ''] ?? row.level ?? '--'}</Badge>
+      <span className="text-muted-foreground tabular-nums text-xs">{fmtDateTime(row.ts)}</span>
     ),
   },
   {
@@ -66,18 +50,14 @@ const columns: DataTableColumn<NewsFlashOut>[] = [
 
 export default function NewsflashPage() {
   useChannelRefresh(['newsflash'], ['market', 'newsflash']);
-  const [level, setLevel] = useState('');
   const [keyword, setKeyword] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
 
   const newsQuery = useQuery({
-    queryKey: ['market', 'newsflash', level, query, page],
+    queryKey: ['market', 'newsflash', query, page],
     queryFn: ({ signal }) =>
-      marketApi.newsflash(
-        { level: level || undefined, keyword: query || undefined, page, page_size: PAGE_SIZE },
-        signal,
-      ),
+      marketApi.newsflash({ keyword: query || undefined, page, page_size: PAGE_SIZE }, signal),
   });
 
   return (
@@ -85,25 +65,6 @@ export default function NewsflashPage() {
       <h1 className="text-xl font-semibold">7×24 快讯</h1>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="news-level" className="text-xs">
-            级别
-          </Label>
-          <Select
-            id="news-level"
-            value={level}
-            onChange={(event) => {
-              setLevel(event.target.value);
-              setPage(1);
-            }}
-            className="w-28"
-          >
-            <option value="">全部</option>
-            <option value="high">重要</option>
-            <option value="mid">一般</option>
-            <option value="low">低</option>
-          </Select>
-        </div>
         <div className="space-y-1">
           <Label htmlFor="news-keyword" className="text-xs">
             关键词

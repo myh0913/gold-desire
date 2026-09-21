@@ -336,7 +336,7 @@ export const marketApi = {
   ladderDates: (signal?: AbortSignal) =>
     request<DatesResponse>('/ladder/dates', { signal }),
   newsflash: (
-    params: { level?: string; keyword?: string; page?: number; page_size?: number },
+    params: { keyword?: string; page?: number; page_size?: number },
     signal?: AbortSignal,
   ) => request<NewsFlashPage>('/newsflash', { params, signal }),
   themes: (params: { date?: string }, signal?: AbortSignal) =>

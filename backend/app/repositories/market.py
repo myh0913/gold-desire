@@ -85,7 +85,7 @@ _SENTIMENT_UPDATE = (
     "source",
 )
 _NEWS_CONFLICT = ("ts", "title")
-_NEWS_UPDATE = ("level", "summary", "symbols", "categories", "source")
+_NEWS_UPDATE = ("summary", "symbols", "categories", "source")
 _THEME_CONFLICT = ("trade_date", "name")
 _THEME_UPDATE = ("rank", "core_avg_pct", "description", "core_count", "source")
 _THEME_STOCK_CONFLICT = ("trade_date", "theme_name", "code")
@@ -377,18 +377,15 @@ class NewsFlashRepository(BaseRepository):
         return await self.bulk_upsert(NewsFlash, rows, _NEWS_CONFLICT, _NEWS_UPDATE)
 
     async def list_recent(
-        self, limit: int = 50, level: str | None = None, keyword: str | None = None
+        self, limit: int = 50, keyword: str | None = None
     ) -> list[NewsFlash]:
         """按发布时间倒序取快讯。
 
         Args:
             limit: 返回条数上限。
-            level: 仅取该重要级别。
             keyword: 关键词，命中标题**或**摘要即返回。
         """
         stmt = select(NewsFlash)
-        if level is not None:
-            stmt = stmt.where(NewsFlash.level == level)
         if keyword:
             pattern = f"%{keyword}%"
             stmt = stmt.where(or_(NewsFlash.title.ilike(pattern), NewsFlash.summary.ilike(pattern)))

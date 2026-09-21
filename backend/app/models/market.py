@@ -292,9 +292,6 @@ class NewsFlash(SourceMixin, Base):
     ts: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True, nullable=False, doc="发布时间"
     )
-    level: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, doc="重要级别；源缺失为 NULL"
-    )
     title: Mapped[str] = mapped_column(String(512), nullable=False, doc="标题")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True, doc="摘要")
     symbols: Mapped[list[str]] = mapped_column(JsonType, nullable=False, doc="关联证券代码列表")

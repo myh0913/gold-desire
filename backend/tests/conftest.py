@@ -395,7 +395,6 @@ async def seed_market(factory: async_sessionmaker[AsyncSession]) -> dict[str, An
             [
                 {
                     "ts": datetime(2026, 6, 3, 9, 0, tzinfo=UTC),
-                    "level": "high",
                     "title": "测试快讯一",
                     "summary": "摘要一",
                     "symbols": [STOCK_CODE],
@@ -404,7 +403,6 @@ async def seed_market(factory: async_sessionmaker[AsyncSession]) -> dict[str, An
                 },
                 {
                     "ts": datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
-                    "level": "low",
                     "title": "测试快讯二",
                     "summary": None,
                     "symbols": [],

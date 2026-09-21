@@ -222,7 +222,6 @@ async def get_theme_stocks(
 
 @router.get("/newsflash", response_model=MarketPageResponse[NewsFlashOut])
 async def list_newsflash(
-    level: str | None = Query(default=None, max_length=16),
     keyword: str | None = Query(default=None, max_length=64),
     limit: int | None = Query(default=None, ge=1, description="``limit`` 等价于 ``page_size``"),
     page: int = Query(default=1, ge=1),
@@ -233,7 +232,7 @@ async def list_newsflash(
     """分页检索快讯（``limit`` 与 ``page_size`` 二者取一，均受上限约束）。"""
     effective_size = limit if limit is not None else page_size
     return await service.newsflash(
-        level=level, keyword=keyword, page=page, page_size=effective_size
+        keyword=keyword, page=page, page_size=effective_size
     )
 
 

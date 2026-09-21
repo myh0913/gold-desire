@@ -228,7 +228,6 @@ def _newsflash_rows() -> list[dict[str, Any]]:
     return [
         {
             "ts": datetime(2026, 6, 3, 9, 0, tzinfo=UTC),
-            "level": "high",
             "title": "测试快讯一",
             "summary": "摘要一",
             "symbols": ["600000"],
@@ -237,7 +236,6 @@ def _newsflash_rows() -> list[dict[str, Any]]:
         },
         {
             "ts": datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
-            "level": "low",
             "title": "测试快讯二",
             "summary": None,
             "symbols": [],

@@ -41,15 +41,12 @@ class ReadRepository(BaseRepository):
     async def paginate_news(
         self,
         *,
-        level: str | None = None,
         keyword: str | None = None,
         page: int = 1,
         page_size: int | None = None,
     ) -> PageResult[Any]:
-        """按重要级别/关键词分页检索快讯（按发布时间倒序）。"""
+        """按关键词分页检索快讯（按发布时间倒序）。"""
         stmt = select(NewsFlash)
-        if level:
-            stmt = stmt.where(NewsFlash.level == level)
         if keyword:
             pattern = f"%{keyword}%"
             stmt = stmt.where(

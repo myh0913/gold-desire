@@ -198,7 +198,6 @@ class NewsFlashContract(ContractModel):
     """新闻快讯契约。"""
 
     ts: datetime = Field(description="快讯时间（Asia/Shanghai，含时区）")
-    level: str | None = Field(default=None, description="重要级别（源自定义，如 A/B/C）")
     title: str = Field(description="标题")
     summary: str = Field(default="", description="摘要，源缺失时为空串")
     symbols: list[str] = Field(default_factory=list, description="关联证券代码列表")

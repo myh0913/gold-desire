@@ -254,7 +254,6 @@ class QueryThemeTool(AgentTool):
 class QueryNewsflashArgs(BaseModel):
     """``query_newsflash`` 入参。"""
 
-    level: str | None = Field(default=None, description="重要级别，如 high/low")
     keyword: str | None = Field(default=None, description="关键词（命中标题或摘要）")
     page: int = Field(default=1, ge=1, description="页码，从 1 起")
     page_size: int = Field(default=20, ge=1, le=200, description="页大小（上限 200）")
@@ -265,7 +264,7 @@ class QueryNewsflashTool(AgentTool):
     """分页检索快讯。"""
 
     name = "query_newsflash"
-    description = "分页检索 7×24 快讯（按发布时间倒序，可按重要级别与关键词过滤）。"
+    description = "分页检索 7×24 快讯（按发布时间倒序，可按关键词过滤）。"
     args_model = QueryNewsflashArgs
     parameters = tool_schema(QueryNewsflashArgs)
 
@@ -273,7 +272,6 @@ class QueryNewsflashTool(AgentTool):
         """调用 :meth:`MarketService.newsflash`。"""
         service = MarketService(ctx.repos)
         result = await service.newsflash(
-            level=kwargs["level"],
             keyword=kwargs["keyword"],
             page=kwargs["page"],
             page_size=kwargs["page_size"],

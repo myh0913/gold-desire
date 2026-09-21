@@ -78,6 +78,19 @@ async def _write_limit_up_pool(
     return await repos.limit_up_pool.upsert_many(payload)
 
 
+async def _replace_limit_up_pool(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """涨停池（盘中轮询）：**整批替换**当日快照，库中只保留最近一次拉取结果。
+
+    与 :func:`_write_limit_up_pool` 的区别只在写入语义：本写入器先删除当日该
+    ``pool_type`` 的旧行再写入，因此「本轮已掉出池子」的票不会残留（例如先涨停
+    后炸板）。空结果不触发删除，见 ``LimitUpPoolRepository.replace_pool``。
+    """
+    payload = [{**_dump(row, source), "trade_date": trade_date} for row in rows]
+    return await repos.limit_up_pool.replace_pool(trade_date, payload)
+
+
 async def _write_ladder(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
@@ -186,6 +199,7 @@ async def _write_trading_calendar(
 WRITERS: dict[str, WriterFn] = {
     "daily_bars": _write_daily_bars,
     "limit_up_pool": _write_limit_up_pool,
+    "limit_up_pool_replace": _replace_limit_up_pool,
     "ladder": _write_ladder,
     "market_sentiment": _write_market_sentiment,
     "theme_rank": _write_theme_rank,
@@ -376,9 +390,13 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
     IngestTaskDef(
         name="limit_up_pool",
         capability="limit_up_pool",
-        target="limit_up_pool",
-        window=Window("auction", "09:25", "09:40"),
-        interval_seconds=0,
+        # 盘中轮询 + 整批替换：09:25 首封起每 10 分钟拉一次（午休 11:30-13:00 跳过），
+        # 15:05 收口（收盘后仍有最后一刀）。库中只保留**最近一次**快照——
+        # 「先涨停、后炸板」的票不会残留（replace 语义，非 upsert 并集）。
+        # 下游读取一律走库（/api/pools），不直连上游。
+        target="limit_up_pool_replace",
+        window=Window("intraday_pool", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=600,
         idempotency_key=_default_key,
         args_builder=_limit_up_pool_args,
     ),

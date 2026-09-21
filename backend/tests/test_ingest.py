@@ -302,10 +302,11 @@ async def test_scheduler_state_prevents_rerun_and_retries_failures(
         now_fn=lambda: morning,
     )
     first = await sched.run_once(window="auction")
-    assert {result.task for result in first} == {"limit_up_pool", "opening_match"}
+    # limit_up_pool 已改为盘中轮询（intraday_pool 窗口），竞价窗口只剩 09:25 撮合任务。
+    assert {result.task for result in first} == {"opening_match"}
     assert await sched.run_once(window="auction") == []
     async with factory() as session:
-        assert await _count(session, IngestJob, capability="limit_up_pool") == 1
+        assert await _count(session, IngestJob, capability="opening_match") == 1
 
     provider.fail_for = {"daily_bars"}
     await _seed_main_board_ladder(factory)
@@ -355,7 +356,8 @@ async def test_calendar_failure_falls_back_to_weekdays(
         now_fn=lambda: datetime(2026, 9, 18, 9, 30, tzinfo=SH),
     )
     results = await sched.run_once(window="auction")
-    assert {result.task for result in results} == {"limit_up_pool", "opening_match"}
+    # 竞价窗口现只剩撮合任务（limit_up_pool 走 intraday_pool 盘中轮询窗口）
+    assert {result.task for result in results} == {"opening_match"}
 
 
 # ============================================================ 7. 窗口过滤

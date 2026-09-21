@@ -219,6 +219,41 @@ class LimitUpPoolRepository(BaseRepository):
         """按 ``(trade_date, pool_type, code)`` 幂等覆盖写入涨停池。"""
         return await self.bulk_upsert(LimitUpPool, rows, _LIMIT_UP_CONFLICT, _LIMIT_UP_UPDATE)
 
+    async def replace_pool(self, trade_date: date, rows: Sequence[Mapping[str, Any]]) -> int:
+        """**整批替换**某交易日的涨停池快照（先清后写）。
+
+        用于盘中轮询场景：库中只保留**最近一次拉取**的结果，而不是历次轮询的
+        并集。否则「先涨停、后炸板」的票会因 ``upsert`` 只覆盖不删除而永久残留
+        （``upsert_many`` 的冲突键是 ``(trade_date, pool_type, code)``，只更新
+        已存在的行，删不掉本轮已不在池中的行）。
+
+        语义与安全边界：
+
+        - 只删除 ``rows`` 中实际出现的 ``pool_type``（同一交易日其他池型不受影响）；
+        - ``rows`` 为空时**直接返回 0，不做任何删除**——空结果视为「本轮无数据」，
+          避免上游瞬时异常/解析失败把当日已有快照清空。
+
+        Args:
+            trade_date: 目标交易日。
+            rows: 本轮取到的池行（须含 ``pool_type`` 列）。
+
+        Returns:
+            写入行数（等于 ``len(rows)``；空输入为 0）。
+        """
+        materialized = list(rows)
+        if not materialized:
+            return 0
+        pool_types = sorted(
+            {str(row["pool_type"]) for row in materialized if row.get("pool_type") is not None}
+        )
+        if pool_types:
+            await self.delete_where(
+                LimitUpPool,
+                LimitUpPool.trade_date == trade_date,
+                LimitUpPool.pool_type.in_(pool_types),
+            )
+        return await self.upsert_many(materialized)
+
     async def get_pool(self, trade_date: date, pool_type: str) -> list[LimitUpPool]:
         """取某日某池型的成分，按连板天数降序。"""
         stmt = (

@@ -6,8 +6,8 @@
 | ``minute_bars``（分时） | 90 天 | 量最大、回溯价值随时间衰减 |
 | ``news_flash``（快讯） | 7 天 | 对齐旧 quant（``save_news`` 同款 7 天） |
 | ``themes`` / ``theme_stocks``（主题） | 7 个自然日 | 对齐旧 quant ``theme_snapshots`` |
-| ``limit_up_pool``（涨停池） | 90 天 | 旧 quant 仅留最新；本系统日线采集与样本推导 |
-| | | 依赖 30 天池历史，故保留 90 天（有界且够用） |
+| ``limit_up_pool``（涨停池） | 最近 30 个交易日 | 盘中轮询只留最新快照（覆盖写）， |
+| | | 历史按最近 30 个交易日保留 |
 | ``monitor_stocks``（监管名单） | 仅最新交易日 | 对齐旧 quant「cache + 最新兜底快照」 |
 | ``daily_bars`` / ``advice_reports`` / ``ladder`` | 永久 | 日线为策略基础数据；天梯对齐旧 quant 无清理 |
 
@@ -51,8 +51,18 @@ NEWS_RETENTION_DAYS = 7
 THEME_RETENTION_DAYS = 7
 """``themes`` / ``theme_stocks`` 保留自然日数（对齐旧 quant）。"""
 
-POOL_RETENTION_DAYS = 90
-"""``limit_up_pool`` 保留天数（覆盖 30 天候选推导窗口，有界增长）。"""
+POOL_RETENTION_TRADING_DAYS = 30
+"""``limit_up_pool`` 保留的最近**交易日**数（含当日）。
+
+涨停池是盘中外呼的**快照**（库中只留最近一次拉取结果），历史按交易日计数保留，
+供前端日期下拉与策略样本推导回看。更早的交易日整日清掉。
+"""
+
+POOL_RETENTION_FALLBACK_DAYS = 45
+"""涨停池历史交易日不足 :data:`POOL_RETENTION_TRADING_DAYS` 天时的自然日回退上限。
+
+30 个交易日 ≈ 42 个自然日（含周末），取 45 留余量；仅用于「库里还没有 30 个
+交易日」的早期阶段，避免按交易日判定因样本不足而误判。"""
 
 PERMANENT_TABLES = ("daily_bars", "advice_reports", "ladder")
 """永久保留、清理任务 SHALL NOT 触碰的表（含连板天梯，对齐旧 quant）。"""
@@ -112,6 +122,27 @@ async def run_retention(
         return await _execute(owned, commit=True)
 
 
+async def _pool_retention_cutoff(session: AsyncSession, today: date) -> date:
+    """涨停池保留起点（按**交易日**计数）。
+
+    取库中倒序第 :data:`POOL_RETENTION_TRADING_DAYS` 个交易日作为起点，早于它的
+    整日删除（``trade_date < cutoff`` 即清掉更老的交易日）。
+
+    库中交易日不足该天数时（早期阶段）回退到
+    :data:`POOL_RETENTION_FALLBACK_DAYS` 个自然日，避免因样本不足而误删。
+    """
+    stmt = (
+        select(LimitUpPool.trade_date)
+        .distinct()
+        .order_by(LimitUpPool.trade_date.desc())
+        .limit(POOL_RETENTION_TRADING_DAYS)
+    )
+    dates = list((await session.execute(stmt)).scalars().all())
+    if len(dates) < POOL_RETENTION_TRADING_DAYS:
+        return today - timedelta(days=POOL_RETENTION_FALLBACK_DAYS)
+    return min(dates)
+
+
 async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
     """在给定会话上执行删除，必要时提交。"""
     now = datetime.now(UTC)
@@ -120,7 +151,7 @@ async def _execute(session: AsyncSession, *, commit: bool) -> RetentionReport:
     minute_cutoff = (now - timedelta(days=MINUTE_BAR_RETENTION_DAYS)).date()
     news_cutoff = now - timedelta(days=NEWS_RETENTION_DAYS)
     theme_cutoff = today - timedelta(days=THEME_RETENTION_DAYS)
-    pool_cutoff = today - timedelta(days=POOL_RETENTION_DAYS)
+    pool_cutoff = await _pool_retention_cutoff(session, today)
 
     repo = BaseRepository(session)
     raw_deleted = await RawResponseRepository(session).delete_where(
@@ -169,7 +200,8 @@ __all__ = [
     "MINUTE_BAR_RETENTION_DAYS",
     "NEWS_RETENTION_DAYS",
     "PERMANENT_TABLES",
-    "POOL_RETENTION_DAYS",
+    "POOL_RETENTION_FALLBACK_DAYS",
+    "POOL_RETENTION_TRADING_DAYS",
     "RAW_RESPONSE_RETENTION_DAYS",
     "RetentionReport",
     "THEME_RETENTION_DAYS",

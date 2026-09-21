@@ -8,10 +8,14 @@
 =========== =============== ========================================
 auction     09:25-09:40     竞价池（涨停池首封）+ 09:25 撮合价
 intraday    09:26-10:00     盘中轮询（快讯等，按 interval 重复）
+intraday_pool 09:25-15:05   涨停池盘中轮询（10 分钟一轮，**跳过午休**）
 tailpan     14:45-15:00     尾盘题材（题材榜 / 题材个股）
 postmarket  17:00-18:00     盘后日线 / 天梯 / 情绪 / 交易日历
 intraday_day 09:30-15:00    全时段分时（minute_bars，5 分钟一轮）
 =========== =============== ========================================
+
+``Window.breaks`` 声明的子区间在窗口内被**跳过**（如 ``intraday_pool`` 跳过
+11:30-13:00 午休）。
 
 可配置性：本模块从环境变量读取覆盖值（``Settings`` 由其他 Task 持有，本 Task
 不修改 ``app/core/config.py``）。优先级：显式传入的 ``settings`` 属性 >
@@ -50,14 +54,17 @@ class Window:
     """采集窗口（闭区间，含起止 ``HH:MM``）。
 
     Attributes:
-        name: 窗口名（auction/intraday/tailpan/postmarket）。
+        name: 窗口名（auction/intraday/intraday_pool/tailpan/postmarket/intraday_day）。
         start: 起始 ``HH:MM``（含）。
         end: 结束 ``HH:MM``（含）。
+        breaks: 窗口内需跳过的子区间（闭区间）元组，如午休 ``(("11:30", "13:00"),)``；
+            缺省为空表示整个 ``[start, end]`` 连续有效。
     """
 
     name: str
     start: str
     end: str
+    breaks: tuple[tuple[str, str], ...] = ()
 
     @property
     def bounds(self) -> tuple[str, str]:
@@ -68,6 +75,8 @@ class Window:
 DEFAULT_WINDOWS: tuple[Window, ...] = (
     Window("auction", "09:25", "09:40"),
     Window("intraday", "09:26", "10:00"),
+    # 涨停池盘中轮询：09:25 首封起、15:05 收盘后收口；午休 11:30-13:00 跳过。
+    Window("intraday_pool", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
     Window("tailpan", "14:45", "15:00"),
     Window("postmarket", "17:00", "18:00"),
     Window("intraday_day", "09:30", "15:00"),
@@ -113,7 +122,10 @@ def load_windows(
         if raw:
             start, _, end = str(raw).partition("-")
             if start.strip() and end.strip():
-                windows.append(Window(default.name, start.strip(), end.strip()))
+                # 环境变量只覆盖起止时刻，``breaks``（午休等）沿用默认声明。
+                windows.append(
+                    Window(default.name, start.strip(), end.strip(), default.breaks)
+                )
                 continue
         windows.append(default)
     return windows
@@ -132,9 +144,16 @@ def window_by_name(windows: list[Window], name: str) -> Window:
 
 
 def in_window(now: datetime, window: Window) -> bool:
-    """``now`` 是否落在窗口闭区间内（按 ``HH:MM`` 比较）。"""
+    """``now`` 是否落在窗口闭区间内（按 ``HH:MM`` 比较，排除 ``breaks`` 子区间）。
+
+    ``breaks`` 用于跳过窗口内的休市时段（如涨停池轮询跳过午休
+    11:30-13:00）——被跳过的分钟内 :func:`in_window` 返回 ``False``，
+    调度器不会触发该窗口下的任务。
+    """
     hm = now.strftime("%H:%M")
-    return window.start <= hm <= window.end
+    if not (window.start <= hm <= window.end):
+        return False
+    return not any(start <= hm <= end for start, end in window.breaks)
 
 
 def _int_setting(

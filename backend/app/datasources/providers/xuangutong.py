@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, ClassVar, Final
 
 import httpx
@@ -34,6 +35,8 @@ from app.core.config import get_settings
 from app.core.errors import UpstreamError
 from app.datasources.base import BaseProvider, SourceKind, request_with_retry
 from app.datasources.registry import register_provider
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["BAOER_BASE_URL", "FLASH_BASE_URL", "HOME_URL", "XuangutongProvider"]
 
@@ -201,7 +204,58 @@ class XuangutongProvider(BaseProvider):
                 params=params,
                 headers=headers,
             )
+            payload = self._unwrap(response, capability)
+            # 注意：必须在 finally 之前补齐——自建 client 会在 finally 里关闭。
+            if capability == "theme_rank":
+                await self._enrich_theme_rank(client, payload, headers)
         finally:
             if owns:
                 await client.aclose()
-        return self._unwrap(response, capability)
+        return payload
+
+    async def _enrich_theme_rank(
+        self, client: httpx.AsyncClient, payload: dict[str, Any], headers: dict[str, str]
+    ) -> None:
+        """给题材榜补 ``core_avg_pcp``（核心股平均涨幅）。
+
+        ``surge_stock/plates`` 只给题材名与说明，**核心涨幅要另打 ``plate/data``**
+        （一次批量取全部 plate_id，避免 N 次请求）。补齐属可选增强：失败时打警告后
+        原样返回，映射会把 ``core_avg_pct`` 留空，前端显示 ``--``——不阻断主采集。
+        """
+        data = payload.get("data")
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or not items:
+            return
+        ids = [
+            str(item["id"])
+            for item in items
+            if isinstance(item, dict) and item.get("id") is not None
+        ]
+        if not ids:
+            return
+        try:
+            response = await request_with_retry(
+                client,
+                "GET",
+                self._flash + "/api/plate/data",
+                source=self.source_id,
+                params={"fields": "core_avg_pcp", "plates": ",".join(ids)},
+                headers=headers,
+            )
+            body = self._unwrap(response, "plate_data")
+        except (UpstreamError, httpx.HTTPError) as exc:
+            logger.warning("xuangutong theme_rank 核心涨幅补齐失败，按缺失处理: %s", exc)
+            return
+        stats = body.get("data")
+        if not isinstance(stats, dict):
+            return
+        by_id = {str(key): value for key, value in stats.items()}
+        filled = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            stat = by_id.get(str(item.get("id")))
+            if isinstance(stat, dict) and stat.get("core_avg_pcp") is not None:
+                item["core_avg_pcp"] = stat["core_avg_pcp"]
+                filled += 1
+        logger.debug("xuangutong theme_rank 核心涨幅补齐 %d/%d", filled, len(items))

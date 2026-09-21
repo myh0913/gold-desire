@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 
 from app.models.market import (
     DailyBar,
@@ -409,6 +409,63 @@ class ThemeRepository(BaseRepository):
                 ThemeStock, stocks, _THEME_STOCK_CONFLICT, _THEME_STOCK_UPDATE
             )
         return total
+
+    async def replace_themes(
+        self,
+        trade_date: date,
+        themes: Sequence[Mapping[str, Any]] | None = None,
+        stocks: Sequence[Mapping[str, Any]] | None = None,
+    ) -> int:
+        """**整批替换**某日的主题榜 / 成分股（先清后写），返回写入行数。
+
+        用于盘中轮询场景：库中只保留**最近一次拉取**的结果。榜单是完整快照，
+        而 ``upsert_many`` 只覆盖已存在的行——盘中榜单会滚动变化，早先入榜、
+        之后掉出的题材名会永久残留（实测当日累积到 44 行 / rank 到 42，而当前
+        榜单只有 24 个），因此必须替换而非合并。
+
+        语义与安全边界：
+
+        - ``themes`` / ``stocks`` 传入 ``None`` 或**空序列时不触发删除**
+          （空结果视为「本轮无数据」，避免上游瞬时异常把当日已有快照清空）；
+        - 两个参数相互独立，可只替换其中一个。
+
+        Args:
+            trade_date: 目标交易日。
+            themes: 本轮取到的题材榜行；空则不动 ``themes`` 表。
+            stocks: 本轮取到的题材成分股行；空则不动 ``theme_stocks`` 表。
+
+        Returns:
+            写入行数之和。
+        """
+        total = 0
+        if themes:
+            await self.delete_where(Theme, Theme.trade_date == trade_date)
+            total += await self.bulk_upsert(Theme, themes, _THEME_CONFLICT, _THEME_UPDATE)
+        if stocks:
+            await self.delete_where(ThemeStock, ThemeStock.trade_date == trade_date)
+            total += await self.bulk_upsert(
+                ThemeStock, stocks, _THEME_STOCK_CONFLICT, _THEME_STOCK_UPDATE
+            )
+        return total
+
+    async def set_core_counts(self, trade_date: date, counts: Mapping[str, int]) -> int:
+        """按题材名回填某日的 ``core_count``（核心股数量），返回更新行数。
+
+        上游 ``plate/data`` 不提供核心股数量（请求该字段恒为 ``null``），故数量由
+        ``theme_stocks`` 聚合得到——写入成分股之后调用即可。
+        """
+        if not counts:
+            return 0
+        updated = 0
+        for name, count in counts.items():
+            result = await self.session.execute(
+                update(Theme)
+                .where(Theme.trade_date == trade_date, Theme.name == name)
+                .values(core_count=int(count))
+            )
+            updated += int(getattr(result, "rowcount", 0) or 0)
+        await self.session.flush()
+        return updated
 
     async def get_by_date(self, trade_date: date) -> list[Theme]:
         """取某日主题强度榜，按排名升序。"""

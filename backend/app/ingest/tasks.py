@@ -106,20 +106,37 @@ async def _write_market_sentiment(
     return await repos.market_sentiment.upsert_many([_dump(row, source) for row in rows])
 
 
-async def _write_theme_rank(
+async def _replace_theme_rank(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
-    """题材榜：走 ``themes.upsert_many(themes=...)``。"""
+    """题材榜（盘中轮询）：**整批替换**当日题材行。
+
+    榜单是完整快照，盘中会滚动变化；``upsert_many`` 只覆盖不删除，会让早先入榜、
+    之后掉出的题材名永久残留（实测当日累积到 44 行 / rank 到 42，而当前榜单只有
+    24 个）。空结果不触发删除，见 ``ThemeRepository.replace_themes``。
+    """
     themes = [_dump(row, source) for row in rows]
-    return await repos.themes.upsert_many(themes=themes)
+    return await repos.themes.replace_themes(trade_date, themes=themes)
 
 
-async def _write_theme_stocks(
+async def _replace_theme_stocks(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
-    """题材个股：走 ``themes.upsert_many(stocks=...)``。"""
+    """题材成分股（盘中轮询）：**整批替换**当日成分股，并回填题材核心股数。
+
+    ``core_count`` 上游不提供（``plate/data`` 该字段恒为 ``null``），由本轮成分股
+    聚合得到——按题材名统计后回填当日题材行。
+    """
     stocks = [_dump(row, source) for row in rows]
-    return await repos.themes.upsert_many(themes=[], stocks=stocks)
+    total = await repos.themes.replace_themes(trade_date, stocks=stocks)
+    counts: dict[str, int] = {}
+    for stock in stocks:
+        name = stock.get("theme_name")
+        if isinstance(name, str) and name:
+            counts[name] = counts.get(name, 0) + 1
+    if counts:
+        await repos.themes.set_core_counts(trade_date, counts)
+    return total
 
 
 async def _write_newsflash(
@@ -203,8 +220,8 @@ WRITERS: dict[str, WriterFn] = {
     "limit_up_pool_replace": _replace_limit_up_pool,
     "ladder": _write_ladder,
     "market_sentiment": _write_market_sentiment,
-    "theme_rank": _write_theme_rank,
-    "theme_stocks": _write_theme_stocks,
+    "theme_rank_replace": _replace_theme_rank,
+    "theme_stocks_replace": _replace_theme_stocks,
     "newsflash": _write_newsflash,
     "trading_calendar": _write_trading_calendar,
     "minute_bars": _write_minute_bars,
@@ -446,8 +463,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
     IngestTaskDef(
         name="theme_rank",
         capability="theme_rank",
-        target="theme_rank",
-        # 交易时段每 30 分钟一轮（主题榜变化慢于个股，半小时足够）。
+        target="theme_rank_replace",
+        # 交易时段每 30 分钟一轮（主题榜变化慢于个股，半小时足够）；
+        # **整批替换**当日题材行——榜单滚动变化，合并写入会残留已掉出的题材名。
         window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
         interval_seconds=1800,
         idempotency_key=_default_key,
@@ -456,8 +474,9 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
     IngestTaskDef(
         name="theme_stocks",
         capability="theme_stocks",
-        target="theme_stocks",
-        # 与题材榜同窗口同节拍，保证「榜单 + 成分」始终同一时刻口径。
+        target="theme_stocks_replace",
+        # 与题材榜同窗口同节拍，保证「榜单 + 成分」始终同一时刻口径；
+        # 整批替换当日成分股，并按题材聚合回填 `themes.core_count`。
         window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
         interval_seconds=1800,
         idempotency_key=_default_key,

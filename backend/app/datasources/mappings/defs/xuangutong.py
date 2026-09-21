@@ -96,12 +96,14 @@ _THEME_RANK = CapabilityMapping(
     capability="theme_rank",
     record_path="data.items",
     notes="题材排名：data.items 数组顺序即排名（rank 由序号派生）；"
-    "trade_date 取自取数参数（上下文）；该源无核心股涨幅/数量（留空）",
+    "trade_date 取自取数参数（上下文）；核心涨幅由 provider 另打 plate/data 补入 "
+    "`core_avg_pcp`（**已是小数口径**，故用 ratio_passthrough 而非 pct_to_ratio）；"
+    "该源不提供核心股数量，core_count 由成分股聚合回填",
     fields=(
         FieldMap("trade_date", None, "str_to_date", context="args.date"),
         FieldMap("rank", "@index", "rank_from_index"),
         FieldMap("name", "name", "to_str"),
-        FieldMap("core_avg_pct", "core_avg_pcp", "pct_to_ratio", required=False),
+        FieldMap("core_avg_pct", "core_avg_pcp", "ratio_passthrough", required=False),
         FieldMap("description", "description", "to_str", required=False),
         FieldMap("core_count", "core_count", "to_int", required=False),
     ),

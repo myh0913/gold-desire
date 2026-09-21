@@ -242,7 +242,7 @@ async def test_json_columns_round_trip(session: AsyncSession) -> None:
 
 
 def test_all_modules_registered() -> None:
-    """五个领域模块的表都应注册进 metadata（29 张）。"""
+    """五个领域模块的表都应注册进 metadata（30 张）。"""
     tables = set(Base.metadata.tables)
     assert {
         "users",
@@ -251,5 +251,6 @@ def test_all_modules_registered() -> None:
         "strategy_configs",
         "advice_reports",
         "raw_responses",
+        "cycle_judgements",
     } <= tables
-    assert len(tables) == 29
+    assert len(tables) == 30

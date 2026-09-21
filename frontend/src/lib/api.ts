@@ -48,6 +48,7 @@ import type {
 } from '@/types/config';
 import type {
   DatesResponse,
+  LadderMatrixResponse,
   LadderPage,
   MonitorResponse,
   NewsFlashPage,
@@ -318,6 +319,15 @@ export const marketApi = {
     },
     signal?: AbortSignal,
   ) => request<LadderPage>('/ladder', { params, signal }),
+  ladderMatrix: (
+    params: {
+      start?: string;
+      end?: string;
+      min_continue_days?: number;
+      limit_days?: number;
+    },
+    signal?: AbortSignal,
+  ) => request<LadderMatrixResponse>('/ladder/matrix', { params, signal }),
   ladderDates: (signal?: AbortSignal) =>
     request<DatesResponse>('/ladder/dates', { signal }),
   newsflash: (

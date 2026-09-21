@@ -153,6 +153,35 @@ class LadderRowOut(BaseModel):
     first_seal_time: str | None = None
 
 
+class LadderCellOut(BaseModel):
+    """天梯单元格：某票某交易日的连板情况。"""
+
+    boards: int = Field(description="该日连板天数")
+    first_seal_time: str | None = Field(default=None, description="该日首封时间 HH:MM")
+
+
+class LadderMatrixRowOut(BaseModel):
+    """天梯矩阵的一行（一只个股，跨多日的连板单元格）。"""
+
+    code: str
+    name: str
+    cells: dict[str, LadderCellOut] = Field(
+        default_factory=dict, description="交易日（ISO 字符串）→ 该日单元格"
+    )
+
+
+class LadderMatrixResponse(MarketMeta):
+    """连板天梯矩阵：列=交易日（**升序**），行=个股，单元格=连板数 + 首封时间。
+
+    与 :class:`LadderRowOut` 的平铺分页口径并列——矩阵口径一次返回整个区间的
+    聚合结果（供「Excel 式」列布局渲染），不分页。
+    """
+
+    days: list[str] = Field(default_factory=list, description="交易日（ISO 字符串，升序）")
+    rows: list[LadderMatrixRowOut] = Field(default_factory=list)
+    min_continue_days: int = 2
+
+
 class SentimentOut(BaseModel):
     """市场情绪指标（``temperature`` 分，比率字段小数口径）。"""
 

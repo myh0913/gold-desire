@@ -17,6 +17,7 @@ from app.repositories import Repositories, get_repositories
 from app.schemas.common import DatesResponse, MarketPageResponse, PageResponse
 from app.schemas.market import (
     DailyBarsResponse,
+    LadderMatrixResponse,
     LadderRowOut,
     MinuteBarsResponse,
     MonitorResponse,
@@ -125,6 +126,21 @@ async def get_ladder(
         min_continue_days=min_continue_days,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/ladder/matrix", response_model=LadderMatrixResponse)
+async def get_ladder_matrix(
+    start: date | None = Query(default=None, description="起始交易日（含）；缺省取最近 N 个交易日"),
+    end: date | None = Query(default=None, description="结束交易日（含）"),
+    min_continue_days: int = Query(default=2, ge=1, description="连板天数下界"),
+    limit_days: int = Query(default=30, ge=1, le=366, description="缺省区间长度（交易日）"),
+    _: User = Depends(require_page(PageKey.LADDER)),
+    service: MarketService = Depends(get_market_service),
+) -> LadderMatrixResponse:
+    """取连板天梯矩阵（列=交易日升序，行=个股）。"""
+    return await service.ladder_matrix(
+        start=start, end=end, min_continue_days=min_continue_days, limit_days=limit_days
     )
 
 

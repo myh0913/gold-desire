@@ -30,6 +30,9 @@ from app.schemas.common import DatesResponse, MarketPageResponse, PageResponse
 from app.schemas.market import (
     DailyBarOut,
     DailyBarsResponse,
+    LadderCellOut,
+    LadderMatrixResponse,
+    LadderMatrixRowOut,
     LadderRowOut,
     LimitUpPoolOut,
     MinuteBarOut,
@@ -231,6 +234,74 @@ class MarketService:
 
         return await self._policy.get_or_load(
             "ladder", key, loader, MarketPageResponse[LadderRowOut].model_validate
+        )
+
+    async def ladder_matrix(
+        self, *, start: date | None, end: date | None, min_continue_days: int, limit_days: int
+    ) -> LadderMatrixResponse:
+        """取连板天梯**矩阵**（列=交易日升序，行=个股，单元格=连板数 + 首封时间）。
+
+        与 :meth:`ladder`（平铺分页）并列：矩阵口径一次返回整个区间的聚合结果，
+        供前端「Excel 式」列布局渲染。区间缺省取库中最近 ``limit_days`` 个交易日。
+
+        Args:
+            start: 起始交易日（含）；``None`` 表示按 ``limit_days`` 自动取。
+            end: 结束交易日（含）；``None`` 表示取到最新。
+            min_continue_days: 连板天数下界（缺省 2，与参考实现一致）。
+            limit_days: 未指定区间时取的交易日个数。
+        """
+        key = query_key(
+            "ladder",
+            {
+                "view": "matrix",
+                "start": _iso(start),
+                "end": _iso(end),
+                "min_days": min_continue_days,
+                "limit_days": limit_days,
+            },
+        )
+
+        async def loader() -> LadderMatrixResponse:
+            available = await self._repos.ladder.available_dates(limit=366)
+            if start is not None and end is not None:
+                window_start, window_end = start, end
+            elif available:
+                # available 为倒序；取最近 limit_days 个交易日作为默认窗口
+                recent = available[: max(1, limit_days)]
+                window_start, window_end = min(recent), max(recent)
+                if start is not None:
+                    window_start = start
+                if end is not None:
+                    window_end = end
+            else:
+                window_start, window_end = date.min, date.max
+
+            rows = await self._repos.ladder.get_range(
+                window_start, window_end, min_continue_days=min_continue_days
+            )
+
+            days: list[str] = sorted({row.trade_date.isoformat() for row in rows})
+            grouped: dict[str, LadderMatrixRowOut] = {}
+            for row in rows:
+                entry = grouped.get(row.code)
+                if entry is None:
+                    entry = LadderMatrixRowOut(code=row.code, name=row.name)
+                    grouped[row.code] = entry
+                entry.cells[row.trade_date.isoformat()] = LadderCellOut(
+                    boards=row.continue_days, first_seal_time=row.first_seal_time
+                )
+
+            stale, data_date = await market_freshness(self._read, LadderRow)
+            return LadderMatrixResponse(
+                days=days,
+                rows=sorted(grouped.values(), key=lambda item: item.code),
+                min_continue_days=min_continue_days,
+                stale=stale,
+                data_date=data_date,
+            )
+
+        return await self._policy.get_or_load(
+            "ladder", key, loader, LadderMatrixResponse.model_validate
         )
 
     async def ladder_dates(self, limit: int | None) -> DatesResponse:

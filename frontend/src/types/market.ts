@@ -127,6 +127,30 @@ export interface PoolResponse extends MarketMeta {
 
 // --------------------------------------------------------------- 连板天梯
 
+/** 天梯单元格：某票某交易日的连板情况。 */
+export interface LadderCell {
+  /** 该日连板天数 */
+  boards: number;
+  /** 该日首封时间 HH:MM */
+  first_seal_time: string | null;
+}
+
+/** 天梯矩阵的一行（一只个股，跨多日的连板单元格）。 */
+export interface LadderMatrixRow {
+  code: string;
+  name: string;
+  /** 交易日（ISO 字符串）→ 该日单元格 */
+  cells: Record<string, LadderCell>;
+}
+
+/** 连板天梯矩阵：列=交易日（升序），行=个股。 */
+export interface LadderMatrixResponse extends MarketMeta {
+  /** 交易日（ISO 字符串，升序） */
+  days: string[];
+  rows: LadderMatrixRow[];
+  min_continue_days: number;
+}
+
 /** 连板天梯单行。 */
 export interface LadderRowOut {
   trade_date: string;

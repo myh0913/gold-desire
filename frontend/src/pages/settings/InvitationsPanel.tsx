@@ -72,7 +72,12 @@ export function InvitationsPanel() {
       header: '邀请码',
       render: (row) => <span className="font-mono text-xs">{row.code}</span>,
     },
-    { key: 'role', header: '角色', render: (row) => row.role },
+    {
+      key: 'role',
+      header: '角色',
+      // 复用创建表单同款 roleOptions 的 label（与下拉口径一致）
+      render: (row) => roleOptions.find((role) => role.name === row.role)?.label ?? row.role,
+    },
     {
       key: 'expires_at',
       header: '有效期至',

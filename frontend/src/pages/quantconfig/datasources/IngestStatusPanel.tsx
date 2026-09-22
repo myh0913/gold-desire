@@ -27,6 +27,18 @@ const JOB_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'
   error: 'destructive',
 };
 
+/** 任务状态中文文案（配色之外补齐展示）。 */
+const JOB_STATUS_LABEL: Record<string, string> = {
+  success: '成功',
+  succeeded: '成功',
+  ok: '成功',
+  failed: '失败',
+  error: '失败',
+  running: '执行中',
+};
+
+const jobStatusLabel = (status: string): string => JOB_STATUS_LABEL[status] ?? status;
+
 const JOB_COLUMNS: DataTableColumn<IngestJobOut>[] = [
   { key: 'capability', header: '能力', render: (row) => row.capability },
   { key: 'source', header: '数据源', render: (row) => row.source },
@@ -39,7 +51,7 @@ const JOB_COLUMNS: DataTableColumn<IngestJobOut>[] = [
     key: 'status',
     header: '状态',
     render: (row) => (
-      <Badge variant={JOB_STATUS_VARIANT[row.status] ?? 'secondary'}>{row.status}</Badge>
+      <Badge variant={JOB_STATUS_VARIANT[row.status] ?? 'secondary'}>{jobStatusLabel(row.status)}</Badge>
     ),
   },
   { key: 'rows', header: '行数', align: 'right', render: (row) => row.rows },
@@ -103,7 +115,7 @@ export function IngestStatusPanel({ isAdmin }: IngestStatusPanelProps) {
       {
         onSuccess: (result) =>
           setNotice(
-            `任务 ${result.task} 已执行：${result.status}（${result.rows} 行，来源 ${result.source}）`,
+            `任务 ${result.task} 已执行：${jobStatusLabel(result.status)}（${result.rows} 行，来源 ${result.source}）`,
           ),
       },
     );

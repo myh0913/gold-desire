@@ -2,7 +2,7 @@
  * 回测页：任务列表 + 单任务 A/B/C 三段报告；admin 可触发新回测（同步执行）。
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,16 +10,41 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DataTable, type DataTableColumn } from '@/components/common/DataTable';
-import { reportApi } from '@/lib/api';
+import { reportApi, configApi } from '@/lib/api';
 import { usePageAccess } from '@/hooks/useAuth';
 import { daysAgoSh, todaySh } from '@/lib/time';
 import type { BacktestRunOut } from '@/types/report';
+import type { ParamSpec } from '@/types/config';
 
 const STATUS_VARIANT: Record<string, 'secondary' | 'up' | 'down' | 'outline'> = {
   succeeded: 'up',
   running: 'secondary',
   failed: 'down',
 };
+
+/** 任务状态中文文案。 */
+const STATUS_LABEL: Record<string, string> = {
+  succeeded: '成功',
+  running: '运行中',
+  failed: '失败',
+};
+
+const statusLabel = (status: string): string => STATUS_LABEL[status] ?? status;
+
+/** 参数 key → 中文 label（无声明或无 label 时回退原 key）。 */
+function paramLabel(specs: readonly ParamSpec[] | undefined, key: string): string {
+  return specs?.find((item) => item.key === key)?.label ?? key;
+}
+
+/** 参数对象 → 「label=值」列表（按 params_schema 的中文 label 渲染）。 */
+function formatParams(
+  params: Record<string, unknown>,
+  specs: readonly ParamSpec[] | undefined,
+): string {
+  return Object.entries(params)
+    .map(([key, value]) => `${paramLabel(specs, key)}=${String(value)}`)
+    .join('，');
+}
 
 function segmentsOf(report: Record<string, unknown> | null): Array<Record<string, unknown>> {
   if (!report) return [];
@@ -45,7 +70,7 @@ const runColumns = (onSelect: (run: BacktestRunOut) => void): DataTableColumn<Ba
     key: 'status',
     header: '状态',
     render: (row) => (
-      <Badge variant={STATUS_VARIANT[row.status] ?? 'outline'}>{row.status}</Badge>
+      <Badge variant={STATUS_VARIANT[row.status] ?? 'outline'}>{statusLabel(row.status)}</Badge>
     ),
   },
   {
@@ -82,9 +107,26 @@ export default function BacktestPage() {
       (query.state.data?.items ?? []).some((run) => run.status === 'running') ? 2000 : false,
   });
 
+  // 策略定义（params_schema）：任务详情参数行按其中文 label 渲染。
+  // 回测任务只关联一个策略时精确取其 schema；多策略时无法区分参数归属，回退原 key。
+  const strategiesQuery = useQuery({
+    queryKey: ['config', 'strategies'],
+    queryFn: ({ signal }) => configApi.strategies.list(signal),
+  });
+
   const active = selected
     ? (runsQuery.data?.items ?? []).find((run) => run.run_id === selected.run_id) ?? selected
     : null;
+
+  const activeSpecs: ParamSpec[] | undefined = useMemo(() => {
+    const items = strategiesQuery.data?.items ?? [];
+    if (active && active.strategies.length === 1) {
+      const schema = items.find((item) => item.strategy_id === active.strategies[0])?.params_schema;
+      const raw = schema?.params;
+      if (Array.isArray(raw)) return raw as ParamSpec[];
+    }
+    return undefined;
+  }, [strategiesQuery.data, active]);
 
   async function trigger(): Promise<void> {
     setTriggering(true);
@@ -158,14 +200,14 @@ export default function BacktestPage() {
             <CardTitle className="text-base">
               {active.run_id}
               <Badge variant={STATUS_VARIANT[active.status] ?? 'outline'} className="ml-2">
-                {active.status}
+                {statusLabel(active.status)}
               </Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <p className="text-muted-foreground text-xs">
               区间 {active.start_date} ~ {active.end_date} · 参数{' '}
-              {JSON.stringify(active.params)}
+              {formatParams(active.params, activeSpecs)}
             </p>
             {active.error && <p className="text-stock-down text-xs">{active.error}</p>}
             {segmentsOf(active.report).length > 0 ? (

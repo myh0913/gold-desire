@@ -27,20 +27,21 @@ describe('VersionDiffView', () => {
 
     expect(screen.getByText(/对比 v1 → v3/)).toBeInTheDocument();
     expect(screen.getByText('变更（1）')).toBeInTheDocument();
-    // percent 小数口径 0.2 / 0.25 显示为 20% / 25%
+    // percent 小数口径 0.2 / 0.25 显示为 20% / 25%；key 按声明渲染为中文 label
     expect(screen.getByText('20%')).toBeInTheDocument();
     expect(screen.getByText('25%')).toBeInTheDocument();
-    expect(screen.getByText('base_position')).toBeInTheDocument();
+    expect(screen.getByText('单路基础仓位')).toBeInTheDocument();
   });
 
   it('渲染新增与移除参数', () => {
     render(<VersionDiffView diff={DIFF} specs={SPECS} />);
 
     expect(screen.getByText('新增（1）')).toBeInTheDocument();
-    expect(screen.getByText('hold_days')).toBeInTheDocument();
+    expect(screen.getByText('持有可卖日数')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
 
     expect(screen.getByText('移除（1）')).toBeInTheDocument();
+    // gate_shape 无声明 → 回退原 key
     expect(screen.getByText('gate_shape')).toBeInTheDocument();
     expect(screen.getByText('尾盘跳水')).toBeInTheDocument();
   });

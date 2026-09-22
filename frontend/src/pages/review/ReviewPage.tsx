@@ -28,7 +28,12 @@ const STATUS_LABEL: Record<string, string> = {
 
 const POOL_LABEL: Record<string, string> = {
   limit_up: '涨停池',
-  broken: '炸板池',
+  limit_up_broken: '炸板池',
+  yesterday_limit_up: '昨涨停',
+  super_stock: '强势股',
+  limit_down: '跌停池',
+  new_stock: '新股',
+  nearly_new: '次新',
 };
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {

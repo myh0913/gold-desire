@@ -19,6 +19,11 @@ function renderValue(specs: readonly ParamSpec[] | undefined, key: string, value
   return spec ? formatParamValue(spec, value) : String(value ?? '--');
 }
 
+/** 参数 key → 中文 label（无声明或无 label 时回退原 key）。 */
+function renderKey(specs: readonly ParamSpec[] | undefined, key: string): string {
+  return specs?.find((item) => item.key === key)?.label ?? key;
+}
+
 export function VersionDiffView({ diff, specs }: VersionDiffViewProps) {
   const added = Object.entries(diff.added);
   const removed = Object.entries(diff.removed);
@@ -45,7 +50,7 @@ export function VersionDiffView({ diff, specs }: VersionDiffViewProps) {
           <ul className="space-y-1">
             {changed.map(([key, pair]) => (
               <li key={key} className="flex flex-wrap items-center gap-2 font-mono text-xs">
-                <span className="text-muted-foreground">{key}</span>
+                <span className="text-muted-foreground">{renderKey(specs, key)}</span>
                 <span className="text-destructive line-through">
                   {renderValue(specs, key, pair?.[0])}
                 </span>
@@ -64,7 +69,7 @@ export function VersionDiffView({ diff, specs }: VersionDiffViewProps) {
             {added.map(([key, value]) => (
               <li key={key} className="flex flex-wrap items-center gap-2 font-mono text-xs">
                 <Badge variant="secondary">新增</Badge>
-                <span className="text-muted-foreground">{key}</span>
+                <span className="text-muted-foreground">{renderKey(specs, key)}</span>
                 <span className="text-stock-down">{renderValue(specs, key, value)}</span>
               </li>
             ))}
@@ -79,7 +84,7 @@ export function VersionDiffView({ diff, specs }: VersionDiffViewProps) {
             {removed.map(([key, value]) => (
               <li key={key} className="flex flex-wrap items-center gap-2 font-mono text-xs">
                 <Badge variant="destructive">移除</Badge>
-                <span className="text-muted-foreground">{key}</span>
+                <span className="text-muted-foreground">{renderKey(specs, key)}</span>
                 <span className="text-destructive line-through">
                   {renderValue(specs, key, value)}
                 </span>

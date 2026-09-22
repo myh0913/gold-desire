@@ -12,13 +12,22 @@ import { StaleNotice } from '@/components/common/StaleNotice';
 import { marketApi } from '@/lib/api';
 import type { MonitorStockOut } from '@/types/market';
 
+/** 类别中文映射（口径见 ingest/tasks.py：severe=002 严重异常波动，unusual=001 普通异常波动）。 */
+const KIND_LABEL: Record<string, string> = {
+  restricted: '重点监控',
+  severe: '严重异常波动',
+  unusual: '异常波动',
+};
+
+const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
+
 const columns: DataTableColumn<MonitorStockOut>[] = [
   { key: 'code', header: '代码', render: (row) => <span className="tabular-nums">{row.code}</span> },
   { key: 'name', header: '名称', render: (row) => row.name },
   {
     key: 'kind',
     header: '类别',
-    render: (row) => <Badge variant="outline">{row.kind}</Badge>,
+    render: (row) => <Badge variant="outline">{kindLabel(row.kind)}</Badge>,
   },
   {
     key: 'reason',
@@ -68,7 +77,7 @@ export default function MonitorPage() {
             <option value="">全部</option>
             {kinds.map((item) => (
               <option key={item} value={item}>
-                {item}
+                {kindLabel(item)}
               </option>
             ))}
           </Select>

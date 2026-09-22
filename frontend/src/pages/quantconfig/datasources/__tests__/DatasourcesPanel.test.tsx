@@ -70,8 +70,8 @@ describe('DatasourcesPanel', () => {
   it('渲染数据源健康度与声明能力', async () => {
     renderPanel();
 
-    expect(await screen.findByText('limit_up_pool ok · 120ms')).toBeInTheDocument();
-    expect(screen.getByText('daily_bars fail · 900ms')).toBeInTheDocument();
+    expect(await screen.findByText('limit_up_pool 正常 · 120ms')).toBeInTheDocument();
+    expect(screen.getByText('daily_bars 失败 · 900ms')).toBeInTheDocument();
     // 标签同时出现在注册表与主备顺序编辑器中
     expect((await screen.findAllByText('同花顺')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('通达信').length).toBeGreaterThan(0);

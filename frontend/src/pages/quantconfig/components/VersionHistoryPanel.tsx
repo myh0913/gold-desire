@@ -39,6 +39,15 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
   archived: 'outline',
 };
 
+/** 版本状态中文文案。 */
+const STATUS_LABEL: Record<string, string> = {
+  active: '生效中',
+  draft: '草稿',
+  archived: '已归档',
+};
+
+const statusLabel = (status: string): string => STATUS_LABEL[status] ?? status;
+
 export function VersionHistoryPanel({
   versions,
   activeVersion,
@@ -139,7 +148,7 @@ export function VersionHistoryPanel({
               <tr key={item.version} className="border-t">
                 <td className="px-3 py-2 tabular-nums">v{item.version}</td>
                 <td className="px-3 py-2">
-                  <Badge variant={STATUS_VARIANT[item.status] ?? 'outline'}>{item.status}</Badge>
+                  <Badge variant={STATUS_VARIANT[item.status] ?? 'outline'}>{statusLabel(item.status)}</Badge>
                   {activeVersion === item.version && (
                     <span className="text-muted-foreground ml-2 text-xs">生效中</span>
                   )}

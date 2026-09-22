@@ -50,7 +50,9 @@ export function ConnectionPanel() {
             <Badge variant="destructive">不可用</Badge>
           ) : (
             <Badge variant="default">
-              {health.data?.status} · {health.data?.service}
+              {(health.data?.status === 'ok' ? '正常' : health.data?.status) ??
+                '--'}{' '}
+              · {health.data?.service}
             </Badge>
           )}
         </div>

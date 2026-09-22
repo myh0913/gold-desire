@@ -25,7 +25,7 @@ const REVIEW = {
   prev_trade_date: '2026-06-02',
   prev_temperature: 58.0,
   temperature_delta: 4.5,
-  pool_counts: { limit_up: 2, broken: 1 },
+  pool_counts: { limit_up: 2, limit_up_broken: 1 },
   top_ladder: [
     {
       code: '600001',

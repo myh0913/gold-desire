@@ -22,6 +22,15 @@ export interface DatasourceTableProps {
 
 type HealthEntry = { capability: string; item: DatasourceHealthItem };
 
+/** 数据源类型中文映射。 */
+const KIND_LABEL: Record<string, string> = {
+  http: 'HTTP 接口',
+  sdk: 'SDK',
+  file: '文件',
+};
+
+const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
+
 function healthEntries(health: Record<string, DatasourceHealthItem> | undefined): HealthEntry[] {
   return Object.entries(health ?? {}).map(([capability, item]) => ({ capability, item }));
 }
@@ -43,7 +52,7 @@ function HealthCell({ entries }: { entries: HealthEntry[] }) {
               : 'border-destructive/40 text-destructive',
           )}
         >
-          {capability} {item.ok ? 'ok' : 'fail'}
+          {capability} {item.ok ? '正常' : '失败'}
           {typeof item.latency_ms === 'number' ? ` · ${item.latency_ms}ms` : ''}
         </span>
       ))}
@@ -58,7 +67,7 @@ function PingCell({ result }: { result?: Record<string, { ok: boolean; latency_m
       {Object.entries(result).map(([capability, item]) => (
         <div key={capability} className="font-mono text-[10px]">
           <span className={item.ok ? 'text-stock-down' : 'text-destructive'}>
-            {capability} {item.ok ? 'ok' : 'fail'}
+            {capability} {item.ok ? '正常' : '失败'}
           </span>
           {item.latency_ms !== null && <span className="text-muted-foreground"> · {item.latency_ms}ms</span>}
           {item.error && <div className="text-destructive break-all">{item.error}</div>}
@@ -101,7 +110,7 @@ export function DatasourceTable({
                 <div className="text-muted-foreground font-mono text-[11px]">{source.source_id}</div>
               </td>
               <td className="px-3 py-2">
-                <Badge variant="outline">{source.kind}</Badge>
+                <Badge variant="outline">{kindLabel(source.kind)}</Badge>
               </td>
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1">

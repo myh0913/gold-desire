@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -29,6 +30,8 @@ __all__ = [
     "SellRuleResult",
     "evaluate",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: 默认止损档（readme §6：-3%，分钟级触发）。
 DEFAULT_STOP_LOSS = -0.03
@@ -106,6 +109,15 @@ def evaluate(
     hold = max(1, hold_sellable_days)
     usable = [series for series in minute_series[:hold] if series]
     if not usable:
+        # 可卖日分时缺失：无法撮合 → 返回 None（调用方 require_sell=True 时静默跳过
+        # 该建议）。此处结构化告警，避免「回填任务漏跑/数据缺口」被无声吞掉。
+        logger.warning(
+            "sell_rules_no_minute_series",
+            extra={
+                "hold_sellable_days": hold,
+                "series_lengths": [len(series) for series in minute_series[:hold]],
+            },
+        )
         return None
 
     traversed: list[float] = [price for series in usable for price in series]

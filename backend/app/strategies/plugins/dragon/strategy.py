@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any, ClassVar
 
@@ -327,19 +327,22 @@ class DragonStrategy(BaseStrategy):
         resolved = await self._resolve_factor_params(ctx)
         factor_params = self.build_factor_params(params, resolved)
 
-        advices = [
-            advice
-            for advice in (
-                self.advise(
-                    sample,
-                    factor_params=factor_params,
-                    params=params,
-                    require_sell=False,
+        advices = self._cap_positions(
+            [
+                advice
+                for advice in (
+                    self.advise(
+                        sample,
+                        factor_params=factor_params,
+                        params=params,
+                        require_sell=False,
+                    )
+                    for sample in samples
                 )
-                for sample in samples
-            )
-            if advice is not None
-        ]
+                if advice is not None
+            ],
+            params,
+        )
         payloads = self._to_reports(ctx, advices)
         if payloads:
             await ctx.repos.advice_reports.upsert_many(payloads)
@@ -356,8 +359,13 @@ class DragonStrategy(BaseStrategy):
         依赖 ``ctx.repos``（由框架注入）；无仓储（轻量上下文）时返回空候选池。
         有仓储时把候选**落库**（``dragon_pool``，同日重跑整体替换）——这是
         「量化选股」页「盘后建池（次日参考）」区块的数据来源。
+
+        **轻量建池**（``include_pending=True``）：建池结构判定只需 D 日及更早日线
+        与 D 日分时（连板波 / 首阴 / 形态），故收盘后即可捕获 **D = 当日** 的候选
+        （T / T1 / T2 日线未入库时以空指标占位）；T/T1/T2 数据在后续交易日的
+        OPENING / INTRADAY 阶段才参与买卖判定。
         """
-        samples = await self._window_samples(ctx)
+        samples = await self._window_samples(ctx, include_pending=True)
         if getattr(ctx, "repos", None) is not None:
             ran_at = ctx.clock()
             await ctx.repos.dragon_pool.replace_pool(
@@ -399,14 +407,17 @@ class DragonStrategy(BaseStrategy):
         resolved = await self._resolve_factor_params(ctx)
         factor_params = self.build_factor_params(params, resolved)
 
-        advices = [
-            advice
-            for advice in (
-                self.advise(sample, factor_params=factor_params, params=params)
-                for sample in samples
-            )
-            if advice is not None
-        ]
+        advices = self._cap_positions(
+            [
+                advice
+                for advice in (
+                    self.advise(sample, factor_params=factor_params, params=params)
+                    for sample in samples
+                )
+                if advice is not None
+            ],
+            params,
+        )
         payloads = self._to_reports(ctx, advices)
         if ctx.repos is not None and payloads:
             await ctx.repos.advice_reports.upsert_many(payloads)
@@ -418,8 +429,14 @@ class DragonStrategy(BaseStrategy):
 
     # ------------------------------------------------------------ 内部
 
-    async def _window_samples(self, ctx: Any) -> list[DragonSample]:
-        """取判定窗口内的候选样本（无仓储时返回空）。"""
+    async def _window_samples(
+        self, ctx: Any, *, include_pending: bool = False
+    ) -> list[DragonSample]:
+        """取判定窗口内的候选样本（无仓储时返回空）。
+
+        ``include_pending=True`` 供盘后建池用：D+1/D+2 日线未入库的当日首阴
+        仍可入池（T/T1 以空指标占位，详见 :func:`build_pool`）。
+        """
         if getattr(ctx, "repos", None) is None:
             return []
         from app.engine.dragon_samples import build_samples
@@ -430,6 +447,7 @@ class DragonStrategy(BaseStrategy):
             ctx.trade_date,
             lookback_days=_POOL_LOOKBACK_DAYS,
             lookahead_days=_POOL_LOOKAHEAD_DAYS,
+            include_pending=include_pending,
         )
 
     async def _resolve_factor_params(self, ctx: Any) -> dict[str, dict[str, Any]]:
@@ -439,16 +457,36 @@ class DragonStrategy(BaseStrategy):
         return await resolve_factor_params(self.factor_param_ids(), getattr(ctx, "repos", None))
 
     def _to_reports(self, ctx: Any, advices: Sequence[Advice]) -> list[dict[str, Any]]:
-        """把建议转为 ``advice_reports`` 行（幂等键含运行时间）。"""
+        """把建议转为 ``advice_reports`` 行。
+
+        - ``trade_date`` = **运行日**（``ctx.trade_date``）：复盘页按运行日回查
+          （readme §8 建议在 D+1/T 日运行，D 记在 payload.field_snapshot）；
+        - 幂等键含 ``code``：同批多票互不覆盖（迁移 0008）；
+        - ``ran_at`` 整批统一：同日多次重跑按运行时间留痕。
+        """
         ran_at = ctx.clock()
         return [
             {
-                "trade_date": advice.trade_date,
+                "trade_date": ctx.trade_date,
                 "kind": KIND_ADVICE,
                 "strategy_id": self.strategy_id,
                 "strategy_version": None,
+                "code": advice.code,
                 "payload": advice.to_payload(),
                 "ran_at": ran_at,
             }
             for advice in advices
         ]
+
+    def _cap_positions(self, advices: list[Advice], params: Mapping[str, Any]) -> list[Advice]:
+        """同批建议总仓超 ``max_total_position`` 时**等比压缩**（readme §7.2）。
+
+        :class:`Advice` 为 frozen dataclass，压缩经 :func:`dataclasses.replace` 重建
+        （止损价等其余字段不变）。
+        """
+        cap = float(self.param(params, "max_total_position"))
+        total = sum(advice.position for advice in advices)
+        if not advices or total <= cap or total <= 0:
+            return advices
+        scale = cap / total
+        return [replace(advice, position=advice.position * scale) for advice in advices]

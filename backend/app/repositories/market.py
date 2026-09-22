@@ -213,6 +213,20 @@ class MinuteBarRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_range(self, code: str, start: date, end: date) -> list[MinuteBar]:
+        """取某股 ``[start, end]`` 区间的全部分时，按日期、分钟序号升序。"""
+        stmt = (
+            select(MinuteBar)
+            .where(
+                MinuteBar.code == code,
+                MinuteBar.trade_date >= start,
+                MinuteBar.trade_date <= end,
+            )
+            .order_by(MinuteBar.trade_date, MinuteBar.minute_index)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_day_bulk(self, codes: Sequence[str], trade_date: date) -> list[MinuteBar]:
         """一次取多只股票某日的分时，按代码、分钟序号升序。"""
         if not codes:

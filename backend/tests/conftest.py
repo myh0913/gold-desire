@@ -430,6 +430,7 @@ async def seed_market(factory: async_sessionmaker[AsyncSession]) -> dict[str, An
                     "kind": "advice",
                     "strategy_id": "dragon",
                     "strategy_version": 1,
+                    "code": STOCK_CODE,
                     "payload": {"path_id": "S2", "code": STOCK_CODE, "position": 0.2},
                     "ran_at": datetime(2026, 6, 3, 15, 5, tzinfo=UTC),
                 }

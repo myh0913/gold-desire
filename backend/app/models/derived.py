@@ -1,6 +1,7 @@
 """派生产物模型（``derived_*`` 语义）：建议报告、回测任务、采集任务与 Agent 审计。
 
-- 建议报告按 ``(trade_date, kind, strategy_id, ran_at)`` 唯一，支持同日多次重跑留痕。
+- 建议报告按 ``(trade_date, kind, strategy_id, ran_at, code)`` 唯一：同一次运行的多条
+  建议（不同股票）互不覆盖，同日多次重跑按 ``ran_at`` 留痕。
 - 采集任务以 ``job_id`` 唯一，幂等键为 ``(capability, args, trade_date)``。
 - Agent 会话/消息/工具调用全量留痕，供事后审计还原。
 """
@@ -70,7 +71,8 @@ class AdviceReport(Base):
             "kind",
             "strategy_id",
             "ran_at",
-            name="uq_advice_reports_trade_kind_strategy_ran",
+            "code",
+            name="uq_advice_reports_trade_kind_strategy_ran_code",
         ),
     )
 
@@ -78,6 +80,9 @@ class AdviceReport(Base):
     trade_date: Mapped[date] = mapped_column(Date, index=True, nullable=False, doc="交易日")
     kind: Mapped[str] = mapped_column(String(32), nullable=False, doc="报告类型")
     strategy_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, doc="策略标识")
+    code: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, doc="股票代码（建议行唯一键组成部分；error 行可空）"
+    )
     strategy_version: Mapped[int | None] = mapped_column(
         Integer, nullable=True, doc="所用策略参数版本号"
     )

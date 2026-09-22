@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.repositories import Repositories
@@ -148,11 +148,17 @@ class ReviewService:
             if key in seen:
                 continue
             seen.add(key)
-            outcomes.append(await self._evaluate(payload, buy_day))
+            outcomes.append(await self._evaluate(payload, buy_day, report.ran_at))
         return outcomes
 
-    async def _evaluate(self, payload: dict[str, Any], buy_day: date | None) -> ReviewAdviceOutcomeOut:
-        """按日线口径评估单条建议的结果。"""
+    async def _evaluate(
+        self, payload: dict[str, Any], buy_day: date | None, ran_at: datetime | None = None
+    ) -> ReviewAdviceOutcomeOut:
+        """按日线口径评估单条建议的结果。
+
+        ``ran_at`` 取**报告行级**值（同一次运行整批统一；历史行 payload 内无
+        ``ran_at`` 键，此前恒为空）。
+        """
         code = str(payload.get("code") or "")
         buy_price = _opt_float(payload.get("buy_price"))
         stop_price = _opt_float(payload.get("stop_loss_price"))
@@ -169,7 +175,7 @@ class ReviewService:
             sell_timing=payload.get("sell_timing"),
             bonus_score=payload.get("bonus_score") if payload.get("bonus_score") is not None else None,
             status="pending",
-            ran_at=payload.get("ran_at"),
+            ran_at=ran_at.isoformat() if ran_at is not None else None,
         )
         if buy_day is None or not buy_price or buy_price <= 0:
             return base

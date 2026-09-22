@@ -26,6 +26,7 @@ async def seeded(
             "kind": "advice",
             "strategy_id": "dragon",
             "strategy_version": None,
+            "code": STOCK_CODE,
         }
         # closed：买 11.6（01-08 开盘），可卖日 01-09 low=11.7 > 止损 11.252 → 收盘 12.0 了结
         closed = {
@@ -106,6 +107,8 @@ async def test_advice_outcomes_and_dedupe(seeded) -> None:
 
     pending = by_key[("S2", "2026-06-05")]
     assert pending.status == "pending"
+    # 行级 ran_at（P0-4）：取报告行的运行时间，而非 payload 内的键（历史行恒空）
+    assert closed.ran_at is not None and closed.ran_at.startswith("2026-06-03T15:05:00")
     # 去重：同键（code+path+买点日）的旧一次运行不重复出现
     assert len([a for a in review.advices if a.path_id == "S2" and a.buy_day == date(2026, 1, 8)]) == 1
 

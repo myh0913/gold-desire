@@ -19,7 +19,12 @@ import pytest
 from app.db.base import Base
 from app.engine.backtest import default_factor_params, run_backtest
 from app.engine.dragon_legacy import load_fixture, load_fixture_records
-from app.engine.dragon_samples import DayMetrics, DragonSample, MinuteMetrics
+from app.engine.dragon_samples import (
+    DayMetrics,
+    DragonSample,
+    MinuteMetrics,
+    build_samples,
+)
 from app.engine.portfolio import GateSpec, PathSpec
 from app.engine.segments import SEGMENT_A, SEGMENT_ALL, SEGMENT_B, SEGMENT_C
 from app.engine.sell_rules import EXIT_CLOSE, EXIT_STOP_LOSS, SellRuleConfig
@@ -28,7 +33,7 @@ from app.repositories import Repositories
 from app.strategies.context import StrategyContext
 from app.strategies.plugins.dragon.gates import GATE_MATRIX, number, param_value
 from app.strategies.plugins.dragon.paths import PATH_S2, PATH_S4
-from app.strategies.plugins.dragon.strategy import KIND_ADVICE, DragonStrategy
+from app.strategies.plugins.dragon.strategy import KIND_ADVICE, Advice, DragonStrategy
 from app.strategies.registry import all_strategies, discover_plugins, get_strategy
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -720,8 +725,159 @@ async def test_confirm_intraday_hook_emits_and_persists_advice() -> None:
         assert advice["sell_timing"]
         assert advice["field_snapshot"]["D"] == "2026-01-07"
 
-        reports = await repos.advice_reports.get_by_date(date(2026, 1, 7), kind=KIND_ADVICE)
+        # 报告按**运行日**（ctx.trade_date）落库，D 记在 payload.field_snapshot；
+        # 唯一键含 code（迁移 0008），code 列随行写入。
+        reports = await repos.advice_reports.get_by_date(date(2026, 1, 8), kind=KIND_ADVICE)
         assert len(reports) == 1
-        assert reports[0].strategy_id == "dragon"
+        assert reports[0].code == code
         assert reports[0].payload["path_id"] == PATH_S2
+        assert reports[0].payload["field_snapshot"]["D"] == "2026-01-07"
+    await engine.dispose()
+
+
+# ============================================================ 回归测试（测试人员 2026-09-22 清单）
+
+
+def _advice_with_position(position: float) -> Advice:
+    """构造最小 Advice（仅用于仓位压缩的纯函数测试）。"""
+    return Advice(
+        code="600001.SH",
+        name="测试股",
+        trade_date=date(2026, 1, 7),
+        path_id=PATH_S2,
+        path_label="高位跳水型",
+        buy_day=date(2026, 1, 8),
+        buy_price=11.0,
+        gates=(),
+        bonus=(),
+        bonus_score=0,
+        position=position,
+        stop_loss_price=10.67,
+        sell_timing="T1 收盘了结",
+        field_snapshot={},
+    )
+
+
+def test_cap_positions_scales_batch_over_limit() -> None:
+    """回归（P0-3）：同批总仓超 ``max_total_position`` 时**等比压缩**（readme §7.2）。"""
+    strategy = DragonStrategy()
+    params = {"max_total_position": 0.8}
+    advices = [_advice_with_position(0.2) for _ in range(5)]
+
+    capped = strategy._cap_positions(advices, params)
+    assert sum(advice.position for advice in capped) == pytest.approx(0.8)
+    assert capped[0].position == pytest.approx(0.16)
+    # 止损价等其余字段不变
+    assert capped[0].stop_loss_price == advices[0].stop_loss_price
+
+    # 未超限 → 原样返回
+    assert strategy._cap_positions(advices[:3], params) == advices[:3]
+
+
+async def test_advice_reports_same_batch_multi_code_no_overwrite(
+    session_factory: async_sessionmaker,
+) -> None:
+    """回归（P0-1）：同一次运行的多票建议不再互相覆盖（唯一键含 code，迁移 0008）。"""
+    async with session_factory() as session:
+        repos = Repositories.build(session)
+        ran_at = datetime(2026, 1, 8, 15, 0, tzinfo=UTC)
+        rows = [
+            {
+                "trade_date": date(2026, 1, 8),
+                "kind": KIND_ADVICE,
+                "strategy_id": "dragon",
+                "strategy_version": None,
+                "code": code,
+                "payload": {"path_id": PATH_S2, "code": code},
+                "ran_at": ran_at,
+            }
+            for code in ("600001.SH", "600002.SH", "600003.SH")
+        ]
+        # 旧实现：3 行同键互相覆盖，库里只剩 1 行
+        assert await repos.advice_reports.upsert_many(rows) == 3
+        # 同键重跑幂等覆盖，仍 3 行
+        assert await repos.advice_reports.upsert_many(rows) == 3
+        await session.commit()
+        stored = await repos.advice_reports.get_by_date(date(2026, 1, 8), kind=KIND_ADVICE)
+        assert {row.code for row in stored} == {"600001.SH", "600002.SH", "600003.SH"}
+
+
+async def test_build_pool_captures_same_day_first_yin(
+    session_factory: async_sessionmaker,
+) -> None:
+    """回归（P1-6 轻量建池）：收盘后建池即可捕获 D=当日 的首阴候选。
+
+    数据只到 D 日（无 D+1/D+2 日线）：严格口径（INTRADAY 判定用）丢弃该样本；
+    ``include_pending=True``（盘后建池用）以空指标占位仍产出。
+    """
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        repos = Repositories.build(session)
+        code = "600001.SH"
+        session.add(Stock(code=code, name="测试股", market="SH", board="主板", is_st=False))
+        session.add_all(
+            [
+                _daily_bar(
+                    code,
+                    date(2026, 1, 5),
+                    open_px=10.5,
+                    high=11.0,
+                    low=10.4,
+                    close=11.0,
+                    pre_close=10.0,
+                    volume=1_000,
+                ),
+                _daily_bar(
+                    code,
+                    date(2026, 1, 6),
+                    open_px=12.1,
+                    high=12.1,
+                    low=12.1,
+                    close=12.1,
+                    pre_close=11.0,
+                    volume=2_000,
+                ),
+                # 首阴 D = 当日（盘后建池时 D+1 尚未发生）
+                _daily_bar(
+                    code,
+                    date(2026, 1, 7),
+                    open_px=12.6,
+                    high=12.8,
+                    low=11.5,
+                    close=11.6,
+                    pre_close=12.1,
+                    volume=3_000,
+                ),
+            ]
+        )
+        session.add_all(_minute_bars(code, date(2026, 1, 7), [12.6] * 200 + [11.5] * 40))
+        await session.commit()
+
+        # 严格口径：D+1/D+2 日线未入库 → 无样本（INTRADAY 判定的既有行为）
+        strict = await build_samples(repos, date(2026, 1, 7), date(2026, 1, 7))
+        assert strict == []
+
+        # 轻量建池口径：D=当日 仍可入池（T/T1 占位）
+        pending = await build_samples(
+            repos, date(2026, 1, 7), date(2026, 1, 7), include_pending=True
+        )
+        assert [sample.code for sample in pending] == [code]
+        assert pending[0].D.isoformat() == "2026-01-07"
+        assert pending[0].boards == 2
+        assert pending[0].shape_label == "尾盘跳水"
+
+        ctx = StrategyContext(
+            strategy_id="dragon",
+            trade_date=date(2026, 1, 7),
+            repos=repos,
+            clock=lambda: datetime(2026, 1, 7, 17, 0, tzinfo=UTC),
+        )
+        strategy = DragonStrategy()
+        pool = await strategy.build_pool(ctx)
+        assert [item["code"] for item in pool["candidates"]] == [code]
+        rows = await repos.dragon_pool.get_by_date(date(2026, 1, 7))
+        assert [row.d_date for row in rows] == [date(2026, 1, 7)]
     await engine.dispose()

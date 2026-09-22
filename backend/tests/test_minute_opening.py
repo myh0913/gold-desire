@@ -178,8 +178,8 @@ async def test_auction_window_produces_opening_advice(seeded) -> None:
         # OPENING 阶段状态成功
         state = await repos.pool_snapshot.get(TODAY, "strategy_state:opening")
         assert state is not None and state.payload["status"] == "succeeded"
-        # S2 建议落库：buy_day=今日、买价=撮合价、仓位=基础仓
-        reports = await repos.advice_reports.get_by_date(date(2026, 6, 3), kind="advice")
+        # S2 建议落库：报告按运行日（今日）落库；buy_day=今日、买价=撮合价、仓位=基础仓
+        reports = await repos.advice_reports.get_by_date(TODAY, kind="advice")
         s2 = [
             row
             for row in reports

@@ -19,7 +19,7 @@ from app.models.derived import AdviceReport, BacktestRun, DragonPoolCandidate, I
 from app.repositories.base import BaseRepository
 
 _TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
-_ADVICE_CONFLICT = ("trade_date", "kind", "strategy_id", "ran_at")
+_ADVICE_CONFLICT = ("trade_date", "kind", "strategy_id", "ran_at", "code")
 _ADVICE_UPDATE = ("strategy_version", "payload")
 
 
@@ -100,7 +100,11 @@ class AdviceReportRepository(BaseRepository):
     """建议报告仓储。"""
 
     async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
-        """按 ``(trade_date, kind, strategy_id, ran_at)`` 幂等覆盖写入建议报告。"""
+        """按 ``(trade_date, kind, strategy_id, ran_at, code)`` 幂等覆盖写入建议报告。
+
+        键含 ``code``：同一次运行的多条建议（不同股票）互不覆盖；``kind="error"``
+        等无 code 的行以 NULL 参与键（NULL 互异 → 各自成行）。
+        """
         return await self.bulk_upsert(AdviceReport, rows, _ADVICE_CONFLICT, _ADVICE_UPDATE)
 
     async def get_by_date(

@@ -664,6 +664,7 @@ async def build_samples(
     min_boards: int = 2,
     lookback_days: int = 120,
     lookahead_days: int = 30,
+    include_pending: bool = False,
 ) -> list[DragonSample]:
     """从库内日线 + 分时构建 ``[start, end]`` 区间内（按基准日 ``D``）的龙回头样本。
 
@@ -674,6 +675,9 @@ async def build_samples(
         min_boards: 连板波最少板数；默认 2（readme §2.1）。
         lookback_days: 向前多取的自然日数（覆盖连板波）。
         lookahead_days: 向后多取的自然日数（覆盖 D+1 / D+2 / D+3）。
+        include_pending: **轻量建池**口径——D+1/D+2 日线未入库（如收盘后即建池，
+            ``D = 当日``）时仍产出样本，T / T1 以空指标 + 日历推算日期占位；
+            默认 ``False``（缺后继日线即丢弃样本）。
 
     Returns:
         按 ``(D, code)`` 升序的 :class:`DragonSample` 列表（三板组 / suspect 票已排除）。
@@ -714,6 +718,7 @@ async def build_samples(
                 end,
                 min_boards,
                 trading_dates,
+                pending_ok=include_pending,
             )
         )
     samples.sort(key=lambda sample: (sample.D, sample.code))
@@ -723,14 +728,28 @@ async def build_samples(
 async def _load_minutes(
     repos: Any, code: str, bars: Sequence[Any]
 ) -> dict[date, tuple[float, ...]]:
-    """批量取该股票各交易日的分钟价序列。"""
-    out: dict[date, tuple[float, ...]] = {}
-    for bar in bars:
-        rows = await repos.minute_bars.get_day(code, bar.trade_date)
-        if rows:
-            ordered = sorted(rows, key=lambda row: int(row.minute_index))
-            out[bar.trade_date] = tuple(float(row.price) for row in ordered)
-    return out
+    """批量取该股票各交易日的分钟价序列（单次范围查询，避免逐日 N 次查询）。"""
+    if not bars:
+        return {}
+    start = min(bar.trade_date for bar in bars)
+    end = max(bar.trade_date for bar in bars)
+    rows = await repos.minute_bars.get_range(code, start, end)
+    grouped: dict[date, list[float]] = {}
+    for row in rows:
+        grouped.setdefault(row.trade_date, []).append(float(row.price))
+    return {day: tuple(prices) for day, prices in grouped.items()}
+
+
+def _next_trading_date(after: date, trading_dates: set[date] | None) -> date:
+    """推算 ``after`` 之后的下一交易日；日历缺失时按自然日 +1 占位。
+
+    仅用于轻量建池的 T / T1 **日期占位**（卖出撮合不依赖该值）。
+    """
+    if trading_dates:
+        later = sorted(day for day in trading_dates if day > after)
+        if later:
+            return later[0]
+    return after + timedelta(days=1)
 
 
 def _wave_start_for(
@@ -891,8 +910,15 @@ def _scan_code(
     end: date,
     min_boards: int,
     trading_dates: set[date] | None = None,
+    *,
+    pending_ok: bool = False,
 ) -> list[DragonSample]:
-    """扫描单只股票的日线，识别「连板波 + 紧邻首阴」并构造样本。"""
+    """扫描单只股票的日线，识别「连板波 + 紧邻首阴」并构造样本。
+
+    ``pending_ok=True``（轻量建池）时，D+1 / D+2 日线未入库的样本仍产出：
+    缺失日以空 :class:`DayMetrics` + 日历推算日期占位（经既有开盘注入参数传入，
+    不改变 :func:`_sample_from_bars` 的严格口径）。
+    """
     if not bars:
         return []
     limit_flags = [_is_limit_up(bar) for bar in bars]
@@ -926,8 +952,32 @@ def _scan_code(
                 if wave_start > 0 and consecutive[wave_start]
                 else None
             )
+            t_metrics = t1_metrics = None
+            t_date = t1_date = None
+            if pending_ok:
+                # 轻量建池：后继日线未入库时以空指标占位（建池只需 D 日结构）。
+                t_bar = bars[index + 1] if index + 1 < len(bars) else None
+                t1_bar = bars[index + 2] if index + 2 < len(bars) else None
+                if t_bar is None:
+                    t_date = _next_trading_date(bar.trade_date, trading_dates)
+                    t_metrics = DayMetrics()
+                if t1_bar is None:
+                    t1_date = _next_trading_date(
+                        t_date or bar.trade_date, trading_dates
+                    )
+                    t1_metrics = DayMetrics()
             sample = _sample_from_bars(
-                code, name, bars, minute_by_date, index, wave_start, pre_wave_bar
+                code,
+                name,
+                bars,
+                minute_by_date,
+                index,
+                wave_start,
+                pre_wave_bar,
+                t_metrics=t_metrics,
+                t1_metrics=t1_metrics,
+                t_date=t_date,
+                t1_date=t1_date,
             )
             if sample is not None and not sample.is_sanbanzu:
                 out.append(sample)

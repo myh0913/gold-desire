@@ -415,7 +415,7 @@ async def seed_market(factory: async_sessionmaker[AsyncSession]) -> dict[str, An
             [
                 {
                     "trade_date": TRADE_DATE,
-                    "kind": "key_monitor",
+                    "kind": "restricted",
                     "code": STOCK_CODE,
                     "name": "测试一号",
                     "reason": "重点监控",

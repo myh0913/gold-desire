@@ -38,6 +38,9 @@ CAPABILITY_EVENTS: dict[str, tuple[str | None, tuple[str, ...]]] = {
     # opening_match 落 pool_snapshot，供 Phase.OPENING 读取，不产生事件。
     "minute_bars": (None, ("minute_bars",)),
     "opening_match": (None, ()),
+    # 监管名单：页面用普通 useQuery（未订阅 WS），故只失效读缓存、不发事件。
+    "monitor_stocks": (None, ("monitor",)),
+    "monitor_unusual": (None, ("monitor",)),
     # trading_calendar / 无读缓存的能力不产生事件。
 }
 

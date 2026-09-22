@@ -24,6 +24,12 @@
 
 - **记录序号**：``FieldMap.source == "@index"``，值为记录在结果集中的 0 起序号
   （配合 ``index_to_rank`` 可派生 1 起排名）。
+- **多列源（元组）**：``FieldMap.source`` 可以是**字符串元组**，如
+  ``("STKCODE", "MARKET")``，表示「同一条记录里取多列」，解析结果是一个元组并整体
+  交给 ``transform``（任一分量取不到即整体缺失）。用于**跨列才能算出**的字段——典型
+  是东财重点监控把交易所外置成 ``MARKET`` 标记（``1``=沪 / ``0``=深 / ``B``=北），
+  标准代码必须由「6 位代码 + 交易所标记」共同决定，单列无法推导（仅凭首位数字会把
+  513390 / 159509 这类基金会判错，实测 15 条里错 9 条）。
 - **运行时上下文**：``FieldMap.context``（如 ``"args.date"``）从调用方传入的
   ``context`` 取值（取数参数、目标交易日等 payload 之外的输入）。
 
@@ -115,7 +121,8 @@ class FieldMap:
         target: 契约字段名（领域标准名）。
         source: 源 payload 中的取值路径（支持 ``[]`` 摊平、``^`` 祖先作用域、
             ``@index`` 序号）；``None`` 表示不使用源取值（走 ``context`` /
-            ``default``）。
+            ``default``）。也可写成**字符串元组**表示「同一条记录取多列」，见
+            模块文档「多列源（元组）」。
         transform: 转换名（见 :mod:`app.datasources.mappings.transforms`）。
         default: 源缺失时使用的默认值；``REQUIRED`` 表示缺失即报错。
         required: 是否为契约必需字段（与 ``default`` 配合决定缺失行为）。
@@ -124,7 +131,7 @@ class FieldMap:
     """
 
     target: str
-    source: str | None = None
+    source: str | tuple[str, ...] | None = None
     transform: str = "identity"
     default: Any = REQUIRED
     required: bool = True
@@ -382,6 +389,31 @@ def _explode(
 # ------------------------------------------------------------------ 字段映射
 
 
+def _tuple_value(
+    parts: tuple[str, ...],
+    record: Any,
+    index: int,
+    ancestors: Sequence[Mapping[str, Any]],
+) -> Any:
+    """多列源：逐列取值组成元组；任一分量取不到则整体返回 ``_MISSING``。
+
+    这样「某列缺失」与「单列缺失」在 ``_map_record`` 里走同一套
+    required / default / 可选留空逻辑，无需调用方特殊处理。
+    """
+    out: list[Any] = []
+    for part in parts:
+        if part == INDEX_SOURCE:
+            value = index
+        elif part.startswith(_ANCESTOR_PREFIX):
+            value = _lookup_ancestors(ancestors, part[len(_ANCESTOR_PREFIX) :])
+        else:
+            value = _lookup(record, part)
+        if value is _MISSING:
+            return _MISSING
+        out.append(value)
+    return tuple(out)
+
+
 def _raw_value(
     field_map: FieldMap,
     record: Any,
@@ -389,12 +421,14 @@ def _raw_value(
     ancestors: Sequence[Mapping[str, Any]],
     context: Mapping[str, Any] | None,
 ) -> Any:
-    """解析字段的源取值（含上下文 / 序号 / 祖先作用域等特殊形式）。"""
+    """解析字段的源取值（含上下文 / 序号 / 祖先作用域 / 多列等特殊形式）。"""
     if field_map.context:
         return _lookup(context, field_map.context) if context else _MISSING
     source = field_map.source
     if source is None:
         return _MISSING
+    if isinstance(source, tuple):
+        return _tuple_value(source, record, index, ancestors)
     if source == INDEX_SOURCE:
         return index
     if source.startswith(_ANCESTOR_PREFIX):
@@ -412,9 +446,7 @@ def _map_record(
     """映射单条记录，返回 (行, 问题列表)；有问题时行为 None。"""
     issues: list[ValidationIssue] = []
     if not isinstance(record, Mapping):
-        issues.append(
-            _issue(mapping, "<record>", "记录不是 JSON 对象", f"records[{index}]")
-        )
+        issues.append(_issue(mapping, "<record>", "记录不是 JSON 对象", f"records[{index}]"))
         return None, issues
 
     row: dict[str, Any] = dict(mapping.static)

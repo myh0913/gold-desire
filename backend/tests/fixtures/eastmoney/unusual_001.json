@@ -1,0 +1,60 @@
+{
+  "version": "fee687df022d998987857665cde9c917",
+  "result": {
+    "pages": 110,
+    "data": [
+      {
+        "SECUCODE": "688137.SH",
+        "SECURITY_CODE": "688137",
+        "SECURITY_NAME_ABBR": "近岸蛋白",
+        "UNUSUAL_TYPE": "001",
+        "START_DATE": "2026-09-17 00:00:00",
+        "END_DATE": "2026-09-21 00:00:00",
+        "INFO_CODE": "AN202609211829727514",
+        "NOTICE_DATE": "2026-09-22 00:00:00",
+        "UNUSUAL_REASON": "公司股票于2026年9月17日、9月18日、9月21日连续3个交易日内日收盘价格涨幅偏离值累计达到30%，根据《上海证券交易所交易规则》《上海证券交易所科创板股票异常交易实时监控细则》的有关规定，属于股票交易异常波动情形",
+        "UNUSUAL_REASON_TYPE": "连续3个交易日内日收盘价格涨幅偏离值累计达到30%",
+        "MRAKET_TYPE": "上交所",
+        "PREDICT_START_DATE": "2026-09-22 00:00:00",
+        "PREDICT_END_DATE": "2026-10-13 00:00:00",
+        "IS_HIS": "1"
+      },
+      {
+        "SECUCODE": "001317.SZ",
+        "SECURITY_CODE": "001317",
+        "SECURITY_NAME_ABBR": "三羊马",
+        "UNUSUAL_TYPE": "001",
+        "START_DATE": "2026-09-17 00:00:00",
+        "END_DATE": "2026-09-21 00:00:00",
+        "INFO_CODE": "AN202609211829726474",
+        "NOTICE_DATE": "2026-09-22 00:00:00",
+        "UNUSUAL_REASON": "三羊马股票交易价格连续3个交易日（2026年9月17日、2026年9月18日、2026年9月21日）内日收盘价格涨幅偏离值累计超过20％，根据《深圳证券交易所交易规则》的相关规定，属于股票交易异常波动情形",
+        "UNUSUAL_REASON_TYPE": "连续3个交易日内日收盘价格涨幅偏离值累计达到20%",
+        "MRAKET_TYPE": "深交所",
+        "PREDICT_START_DATE": "2026-09-22 00:00:00",
+        "PREDICT_END_DATE": "2026-10-13 00:00:00",
+        "IS_HIS": "1"
+      },
+      {
+        "SECUCODE": "001216.SZ",
+        "SECURITY_CODE": "001216",
+        "SECURITY_NAME_ABBR": "华瓷股份",
+        "UNUSUAL_TYPE": "001",
+        "START_DATE": "2026-09-17 00:00:00",
+        "END_DATE": "2026-09-21 00:00:00",
+        "INFO_CODE": "AN202609211829725419",
+        "NOTICE_DATE": "2026-09-22 00:00:00",
+        "UNUSUAL_REASON": "本公司股票交易价格连续三个交易日（2026年9月17日、2026年9月18日、2026年9月21日）收盘价格涨幅偏离值累计达到20%以上，根据《深圳证券交易所交易规则》的有关规定，属于股票交易异常波动的情形",
+        "UNUSUAL_REASON_TYPE": "连续3个交易日内日收盘价格涨幅偏离值累计达到20%",
+        "MRAKET_TYPE": "深交所",
+        "PREDICT_START_DATE": "2026-09-22 00:00:00",
+        "PREDICT_END_DATE": "2026-10-13 00:00:00",
+        "IS_HIS": "1"
+      }
+    ],
+    "count": 5499
+  },
+  "success": true,
+  "message": "ok",
+  "code": 0
+}

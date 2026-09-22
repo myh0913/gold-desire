@@ -366,7 +366,7 @@ async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) ->
         session.add(
             MonitorStock(
                 trade_date=today - timedelta(days=days),
-                kind="key_monitor",
+                kind="restricted",
                 code="600001.SH",
                 name="测试",
                 reason=None,

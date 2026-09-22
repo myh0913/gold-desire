@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 
 from app.models.market import (
     CycleJudgement,
@@ -99,7 +99,17 @@ _THEME_STOCK_UPDATE = (
     "source",
 )
 _MONITOR_CONFLICT = ("trade_date", "kind", "code")
-_MONITOR_UPDATE = ("name", "reason", "source")
+_MONITOR_UPDATE = (
+    "name",
+    "reason",
+    "start_date",
+    "end_date",
+    "notice_date",
+    "info_code",
+    "reason_type",
+    "link_url",
+    "source",
+)
 _LADDER_CONFLICT = ("trade_date", "code")
 _LADDER_UPDATE = ("name", "continue_days", "first_seal_time", "source")
 _STOCK_CONFLICT = ("code",)
@@ -390,9 +400,7 @@ class NewsFlashRepository(BaseRepository):
         """按 ``(ts, title)`` 幂等覆盖写入快讯。"""
         return await self.bulk_upsert(NewsFlash, rows, _NEWS_CONFLICT, _NEWS_UPDATE)
 
-    async def list_recent(
-        self, limit: int = 50, keyword: str | None = None
-    ) -> list[NewsFlash]:
+    async def list_recent(self, limit: int = 50, keyword: str | None = None) -> list[NewsFlash]:
         """按发布时间倒序取快讯。
 
         Args:
@@ -542,9 +550,7 @@ class CycleJudgementRepository(BaseRepository):
 
     async def upsert_one(self, row: Mapping[str, Any]) -> int:
         """按 ``trade_date`` 幂等覆盖写入判定（同日重跑只留最新一次）。"""
-        return await self.bulk_upsert(
-            CycleJudgement, [row], _CYCLE_CONFLICT, _CYCLE_UPDATE
-        )
+        return await self.bulk_upsert(CycleJudgement, [row], _CYCLE_CONFLICT, _CYCLE_UPDATE)
 
     async def get(self, trade_date: date) -> CycleJudgement | None:
         """取某交易日判定。"""

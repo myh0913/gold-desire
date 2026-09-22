@@ -1,0 +1,60 @@
+{
+  "version": "d60f02d6e588ea3bc6dd3f3c89110a9a",
+  "result": {
+    "pages": 4,
+    "data": [
+      {
+        "SECUCODE": "000017.SZ",
+        "SECURITY_CODE": "000017",
+        "SECURITY_NAME_ABBR": "深中华A",
+        "UNUSUAL_TYPE": "002",
+        "START_DATE": "2026-08-20 00:00:00",
+        "END_DATE": "2026-09-02 00:00:00",
+        "INFO_CODE": "AN202609021828934217",
+        "NOTICE_DATE": "2026-09-03 00:00:00",
+        "UNUSUAL_REASON": "公司A股股票连续10个交易日（2026年8月20日至2026年9月2日）收盘价格涨幅偏离值累计达到100%",
+        "UNUSUAL_REASON_TYPE": "连续10个交易日内日收盘价格涨幅偏离值累计达到100%",
+        "MRAKET_TYPE": "深交所",
+        "PREDICT_START_DATE": "2026-09-03 00:00:00",
+        "PREDICT_END_DATE": "2026-09-16 00:00:00",
+        "IS_HIS": "0"
+      },
+      {
+        "SECUCODE": "002731.SZ",
+        "SECURITY_CODE": "002731",
+        "SECURITY_NAME_ABBR": "*ST萃华",
+        "UNUSUAL_TYPE": "002",
+        "START_DATE": null,
+        "END_DATE": "2026-08-28 00:00:00",
+        "INFO_CODE": "AN202608301828734784",
+        "NOTICE_DATE": "2026-08-31 00:00:00",
+        "UNUSUAL_REASON": "公司股票连续30个交易日内收盘价跌幅累计偏离达到-70%,根据《深圳证券交易所交易规则》的有关规定,属于股票交易严重异常波动情形",
+        "UNUSUAL_REASON_TYPE": "连续30个交易日内日收盘价格跌幅偏离值累计达到70%",
+        "MRAKET_TYPE": "深交所",
+        "PREDICT_START_DATE": "2026-08-31 00:00:00",
+        "PREDICT_END_DATE": "2026-09-11 00:00:00",
+        "IS_HIS": "0"
+      },
+      {
+        "SECUCODE": "300313.SZ",
+        "SECURITY_CODE": "300313",
+        "SECURITY_NAME_ABBR": "天山生物",
+        "UNUSUAL_TYPE": "002",
+        "START_DATE": "2026-08-12 00:00:00",
+        "END_DATE": "2026-08-25 00:00:00",
+        "INFO_CODE": "AN202608251828427692",
+        "NOTICE_DATE": "2026-08-26 00:00:00",
+        "UNUSUAL_REASON": "股票交易连续10个交易日(2026年8月12日至2026年8月25日)内日收盘价格涨幅偏离值累计超过100%",
+        "UNUSUAL_REASON_TYPE": "连续10个交易日内日收盘价格涨幅偏离值累计达到100%",
+        "MRAKET_TYPE": "深交所",
+        "PREDICT_START_DATE": "2026-08-26 00:00:00",
+        "PREDICT_END_DATE": "2026-09-08 00:00:00",
+        "IS_HIS": "0"
+      }
+    ],
+    "count": 179
+  },
+  "success": true,
+  "message": "ok",
+  "code": 0
+}

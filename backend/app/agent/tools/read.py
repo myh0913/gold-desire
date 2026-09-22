@@ -284,7 +284,11 @@ class QueryMonitorArgs(BaseModel):
 
     trade_date: date | None = Field(default=None, description="交易日；缺省用库中最新")
     kind: str | None = Field(
-        default=None, description="类型：key_monitor（重点监控）/ severe_unusual（严重异常波动）"
+        default=None,
+        description=(
+            "类型：restricted（交易所重点监控）/ severe（严重异常波动）/ "
+            "unusual（普通异常波动）；缺省不过滤"
+        ),
     )
 
 
@@ -293,7 +297,7 @@ class QueryMonitorTool(AgentTool):
     """取监管名单。"""
 
     name = "query_monitor"
-    description = "取某交易日监管名单（重点监控 / 严重异常波动）。"
+    description = "取某交易日监管名单（重点监控 / 异常波动）。"
     args_model = QueryMonitorArgs
     parameters = tool_schema(QueryMonitorArgs)
 

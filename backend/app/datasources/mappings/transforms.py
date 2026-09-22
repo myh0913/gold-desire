@@ -39,6 +39,18 @@ _HHMMSS_RE: Final[re.Pattern[str]] = re.compile(r"(\d{1,2}):(\d{2}):(\d{2})")
 _BOARD_RE: Final[re.Pattern[str]] = re.compile(r"(\d+)\s*[连]?\s*板")
 #: "首板" 等价于 1 连板。
 _FIRST_BOARD_RE: Final[re.Pattern[str]] = re.compile(r"首板")
+#: 上游外置的「交易所标记 → 代码后缀」。两类口径：
+#: - 东财 ``stock_monitor.json`` 的 ``MARKET``：``1``=沪 / ``0``=深 / ``B``=北；
+#: - 东财数据中心 ``MRAKET_TYPE``（上游字段名确实拼作 MRAKET）：中文交易所名。
+#: 查表前一律 ``strip().upper()``，故 ``b`` 亦可。
+_MARKET_SUFFIXES: Final[dict[str, str]] = {
+    "1": "SH",
+    "0": "SZ",
+    "B": "BJ",
+    "上交所": "SH",
+    "深交所": "SZ",
+    "北交所": "BJ",
+}
 
 
 class MappingError(ValueError):
@@ -311,6 +323,40 @@ def _normalize_code(value: Any) -> Any:
     return DEGRADED
 
 
+@_safe
+def _market_code(value: Any) -> Any:
+    """「6 位代码 + 交易所标记」→ 项目标准代码（**交易所取上游标注，不靠猜**）。
+
+    配合 ``FieldMap.source`` 的**多列源（元组）**使用，如
+    ``FieldMap("code", ("STKCODE", "MARKET"), "market_code")``。
+
+    交易所标记口径（两种，均在 :data:`_MARKET_SUFFIXES` 中登记）：
+
+    - 东财 ``stock_monitor.json`` 的 ``MARKET``：``1`` → 沪 ``.SH``、``0`` → 深 ``.SZ``、
+      ``B`` → 北 ``.BJ``（大小写不敏感）；
+    - 东财数据中心的 ``MRAKET_TYPE``（上游拼写如此）：``上交所`` / ``深交所`` / ``北交所``。
+
+    **为什么不用** :func:`_normalize_code`：那条规则只按「首位数字」推断交易所
+    （6→沪 / 0,3→深 / 4,8,9→北），对基金无效——东财重点监控名单里 513390、
+    159509、501225 这类基金/ETF 会判成非法（实测 15 条里错 9 条）。上游把交易所
+    外置成独立列时，应当以该列为准。
+
+    任一列缺失、代码非 6 位数字、或交易所标记不认识 → ``DEGRADED``（不臆断）。
+    """
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        return DEGRADED
+    raw_code, raw_market = value
+    if _missing(raw_code) or _missing(raw_market):
+        return DEGRADED
+    digits = _digits(str(raw_code))
+    if len(digits) != 6:
+        return DEGRADED
+    suffix = _MARKET_SUFFIXES.get(str(raw_market).strip().upper())
+    if suffix is None:
+        return DEGRADED
+    return f"{digits}.{suffix}"
+
+
 # ------------------------------------------------------------------ 列表
 
 
@@ -363,6 +409,7 @@ TRANSFORMS: Final[dict[str, TransformFn]] = {
     "boards_from_text": _boards_from_text,
     "strip_suffix": _strip_suffix,
     "normalize_code": _normalize_code,
+    "market_code": _market_code,
     "list_of_str": _list_of_str,
 }
 

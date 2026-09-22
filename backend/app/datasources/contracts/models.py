@@ -27,12 +27,17 @@ __all__ = [
     "LimitUpStockContract",
     "MarketSentimentContract",
     "MinuteBarContract",
+    "MonitorStockContract",
     "NewsFlashContract",
     "OpeningMatchContract",
     "ThemeRankContract",
     "ThemeStockContract",
     "TradingDayContract",
 ]
+
+#: 监管名单类型：``restricted``=交易所重点监控 / ``severe``=严重异常波动 /
+#: ``unusual``=普通异常波动（口径对齐参考实现 ``MonitorStock.monitor_type``）。
+MonitorKind = Literal["restricted", "severe", "unusual"]
 
 #: 池类型：与上游 ``pool_name`` 口径一致（7 种）。
 PoolType = Literal[
@@ -237,3 +242,35 @@ class OpeningMatchContract(ContractModel):
     time_label: str | None = Field(
         default=None, description="撮合时间标签（如 09:25）；源缺失为 None"
     )
+
+
+class MonitorStockContract(ContractModel):
+    """监管名单单条契约（某交易日的重点监控 / 异常波动记录）。
+
+    三个来源共用本契约，由 ``kind`` 区分（见 :data:`MonitorKind`）：
+
+    - ``restricted``（交易所重点监控）：有监控**有效期**（``start_date`` /
+      ``end_date``）与公告链接（``link_url``），**无**公告原因文本；
+    - ``severe`` / ``unusual``（严重 / 普通异常波动）：有异动区间
+      （``start_date`` / ``end_date``）、公告日（``notice_date``）、公告编号
+      （``info_code``）、原因文本（``reason``）与原因分类（``reason_type``）。
+
+    故除 ``trade_date`` / ``kind`` / ``code`` / ``name`` 外的字段**一律可选**：
+    缺失写 ``None``，不用 0 / 空串顶替。
+    """
+
+    trade_date: date = Field(description="交易日（Asia/Shanghai）")
+    kind: MonitorKind = Field(description="名单类型：restricted / severe / unusual")
+    code: str = Field(description="证券代码，标准形如 600519.SH")
+    name: str = Field(description="证券简称")
+    reason: str | None = Field(default=None, description="监控/异动原因；源缺失为 None")
+    start_date: date | None = Field(
+        default=None, description="起始日：重点监控的监控期起 / 异动区间起；源缺失为 None"
+    )
+    end_date: date | None = Field(
+        default=None, description="截止日：重点监控的监控期止 / 异动区间止；源缺失为 None"
+    )
+    notice_date: date | None = Field(default=None, description="公告日；源缺失为 None")
+    info_code: str | None = Field(default=None, description="公告编号；源缺失为 None")
+    reason_type: str | None = Field(default=None, description="原因分类；源缺失为 None")
+    link_url: str | None = Field(default=None, description="公告链接；源缺失为 None")

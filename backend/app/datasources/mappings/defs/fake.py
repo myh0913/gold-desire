@@ -170,6 +170,42 @@ _FAKE_OPENING_MATCH = CapabilityMapping(
     ),
 )
 
+_FAKE_MONITOR_RESTRICTED = CapabilityMapping(
+    source_id="fake",
+    capability="monitor_stocks",
+    record_path="data",
+    static={"kind": "restricted"},
+    notes="重点监控（fake）：STKCODE + MARKET 双列拼标准代码；VALIDATE* 为监控有效期",
+    fields=(
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("code", ("STKCODE", "MARKET"), "market_code"),
+        FieldMap("name", "STKNAME", "to_str"),
+        FieldMap("start_date", "VALIDATESTARTDATE", "str_to_date", required=False),
+        FieldMap("end_date", "VALIDATEENDDATE", "str_to_date", required=False),
+        FieldMap("link_url", "LINK_URL", "to_str", required=False),
+    ),
+)
+
+_FAKE_MONITOR_UNUSUAL = CapabilityMapping(
+    source_id="fake",
+    capability="monitor_unusual",
+    record_path="result.data",
+    notes="异常波动（fake）：SECURITY_CODE + MRAKET_TYPE 双列拼标准代码；"
+    "START_DATE / END_DATE / NOTICE_DATE 为 datetime 字符串（str_to_date 兼容）",
+    fields=(
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("kind", None, "to_str", context="args.kind"),
+        FieldMap("code", ("SECURITY_CODE", "MRAKET_TYPE"), "market_code"),
+        FieldMap("name", "SECURITY_NAME_ABBR", "to_str"),
+        FieldMap("reason", "UNUSUAL_REASON", "to_str", required=False),
+        FieldMap("start_date", "START_DATE", "str_to_date", required=False),
+        FieldMap("end_date", "END_DATE", "str_to_date", required=False),
+        FieldMap("notice_date", "NOTICE_DATE", "str_to_date", required=False),
+        FieldMap("info_code", "INFO_CODE", "to_str", required=False),
+        FieldMap("reason_type", "UNUSUAL_REASON_TYPE", "to_str", required=False),
+    ),
+)
+
 #: fake 源覆盖全部 Phase-1 能力的映射。
 FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _DAILY_BAR,
@@ -182,6 +218,8 @@ FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _NEWS_FLASH,
     _FAKE_MINUTE_BAR,
     _FAKE_OPENING_MATCH,
+    _FAKE_MONITOR_RESTRICTED,
+    _FAKE_MONITOR_UNUSUAL,
 )
 
 

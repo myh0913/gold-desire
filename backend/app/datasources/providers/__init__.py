@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from app.datasources.providers.eastmoney import EastmoneyProvider
 from app.datasources.providers.eltdx import EltdxProvider
 from app.datasources.providers.fake import FakeProvider
 from app.datasources.providers.hithink import HithinkProvider
@@ -16,6 +17,7 @@ from app.datasources.registry import set_capability_order
 
 __all__ = [
     "REAL_CAPABILITY_PROVIDERS",
+    "EastmoneyProvider",
     "EltdxProvider",
     "FakeProvider",
     "HithinkProvider",
@@ -46,6 +48,10 @@ REAL_CAPABILITY_PROVIDERS: dict[str, list[str]] = {
     "newsflash": ["xuangutong", "fake"],
     "minute_bars": ["eltdx", "fake"],
     "opening_match": ["eltdx", "fake"],
+    # 监管名单唯一真实源为东财，两个端点（重点监控裸数组 / 异常波动数据中心信封）
+    # 形状不同故拆两个能力，共用同一契约；无 HTTP 备源，fake 兜底。
+    "monitor_stocks": ["eastmoney", "fake"],
+    "monitor_unusual": ["eastmoney", "fake"],
 }
 
 

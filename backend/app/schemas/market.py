@@ -303,6 +303,12 @@ class MonitorStockOut(BaseModel):
     code: str
     name: str
     reason: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    notice_date: date | None = None
+    info_code: str | None = None
+    reason_type: str | None = None
+    link_url: str | None = None
 
 
 class MonitorResponse(MarketMeta):

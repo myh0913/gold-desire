@@ -19,6 +19,7 @@ from app.datasources.contracts.models import (
     LimitUpStockContract,
     MarketSentimentContract,
     MinuteBarContract,
+    MonitorStockContract,
     NewsFlashContract,
     OpeningMatchContract,
     ThemeRankContract,
@@ -36,6 +37,7 @@ __all__ = [
     "LimitUpStockContract",
     "MarketSentimentContract",
     "MinuteBarContract",
+    "MonitorStockContract",
     "NewsFlashContract",
     "OpeningMatchContract",
     "ThemeRankContract",
@@ -57,4 +59,7 @@ CAPABILITY_CONTRACTS: dict[str, type[ContractModel]] = {
     "newsflash": NewsFlashContract,
     "minute_bars": MinuteBarContract,
     "opening_match": OpeningMatchContract,
+    # 监管名单：两个端点形状不同 → 两个能力，共用同一份领域契约。
+    "monitor_stocks": MonitorStockContract,
+    "monitor_unusual": MonitorStockContract,
 }

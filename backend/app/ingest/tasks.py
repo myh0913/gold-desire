@@ -20,11 +20,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.core.timeutil import date_ms, day_end_ms
 from app.datasources.contracts import ContractModel
@@ -184,6 +184,46 @@ async def _write_newsflash(
     return await repos.news_flash.upsert_many([_dump(row, source) for row in rows])
 
 
+def _newer_notice(candidate: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    """候选行的公告日是否比现有行更晚（缺失一律视为「不比现有新」）。"""
+    new_date = candidate.get("notice_date")
+    old_date = current.get("notice_date")
+    if new_date is None:
+        return False
+    if old_date is None:
+        return True
+    return bool(new_date > old_date)
+
+
+def _dedupe_monitor_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """按 ``(kind, code)`` 去重，保留**公告日最新**的一条（保序：首次出现的位置）。
+
+    为什么必须去重：``monitor_stocks`` 的唯一键是 ``(trade_date, kind, code)``，而东财
+    异常波动端点**一只证券可以有多条公告**（实测一页 50 条里有 4 个重复代码）。同一批
+    里出现重复冲突键时，PostgreSQL 的 ``ON CONFLICT DO UPDATE`` 会直接报
+    ``cannot affect row a second time``——整轮采集失败。故必须先去重再 upsert。
+
+    为什么只留一条：表结构本身即「每票每日一条」（见唯一键），一条公告已能回答
+    「这只票为什么进名单」；更早的公告由上游分页提供，不必重复落库。
+    """
+    best: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        item = dict(row)
+        key = (str(item.get("kind") or ""), str(item.get("code") or ""))
+        current = best.get(key)
+        if current is None or _newer_notice(item, current):
+            best[key] = item
+    return list(best.values())
+
+
+async def _write_monitor_stocks(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """监管名单：按 ``(trade_date, kind, code)`` 幂等写入（**批内先去重**，见上）。"""
+    payload = _dedupe_monitor_rows([_dump(row, source) for row in rows])
+    return await repos.monitor_stocks.upsert_many(payload)
+
+
 async def _write_minute_bars(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
@@ -262,6 +302,7 @@ WRITERS: dict[str, WriterFn] = {
     "theme_rank_replace": _replace_theme_rank,
     "theme_stocks_replace": _replace_theme_stocks,
     "newsflash": _write_newsflash,
+    "monitor_stocks": _write_monitor_stocks,
     "trading_calendar": _write_trading_calendar,
     "minute_bars": _write_minute_bars,
     "opening_match": _write_opening_match,
@@ -305,6 +346,34 @@ def _default_key(capability: str, trade_date: date) -> str:
 async def _date_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
     """默认取数参数：``[{"date": "YYYY-MM-DD"}]``（选股通按 ``date`` 锁定历史日）。"""
     return [{"date": trade_date.isoformat()}]
+
+
+#: 异常波动各类型的取数页数（上游按 ``NOTICE_DATE`` **倒序**，故第 1 页即最新）。
+#: 实测（2026-09-22）：002 严重异常波动全量 179 条 / 4 页 → **取全**；
+#: 001 普通异常波动全量 5499 条 / 110 页 → **只取最新 2 页（100 条）**，防止把表撑爆。
+#: 两个数都是**显式上限**：上游历史会持续增长，页数不随 count 变化，避免采集量失控。
+MONITOR_UNUSUAL_PAGES: dict[str, int] = {
+    "severe": 4,
+    "unusual": 2,
+}
+
+
+async def _monitor_stocks_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """重点监控取数参数：**单轮**（该端点只回最新名单，无分页、无历史）。"""
+    return [{"date": trade_date.isoformat()}]
+
+
+async def _monitor_unusual_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """异常波动取数参数：``severe`` / ``unusual`` 各按 :data:`MONITOR_UNUSUAL_PAGES` 逐页取数。
+
+    ``kind`` 同时作为映射上下文（``args.kind``）落成表里的 ``kind`` 列：
+    ``severe``=严重异常波动（002）、``unusual``=普通异常波动（001）。
+    """
+    return [
+        {"kind": kind, "page": page, "date": trade_date.isoformat()}
+        for kind, pages in MONITOR_UNUSUAL_PAGES.items()
+        for page in range(1, pages + 1)
+    ]
 
 
 #: 涨停池 7 种池型（上游 ``pool_name``）；**顺序即前端 Tab 顺序**。
@@ -541,6 +610,30 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         idempotency_key=_default_key,
         # 注意：声明在 ladder 之后——标的推导依赖近期涨停池/天梯已入库（见 all_tasks）。
         args_builder=_daily_bar_args,
+    ),
+    IngestTaskDef(
+        name="monitor_stocks",
+        capability="monitor_stocks",
+        target="monitor_stocks",
+        # 监管名单是**日度参考名单**：交易所的重点监控/异动公告多在收盘后发布，盘中
+        # 抓到的是前一日口径，故放**盘后窗口**（17:00-18:00）每 30 分钟一轮（2-3 轮），
+        # 同一天多轮幂等覆盖，取当日最后一次快照。
+        # 不挂 09:25-15:05 高频窗口：该页面不是盘中数据，高频拉取只会白耗上游。
+        window=Window("postmarket", "17:00", "18:00"),
+        interval_seconds=1800,
+        idempotency_key=_default_key,
+        args_builder=_monitor_stocks_args,
+    ),
+    IngestTaskDef(
+        name="monitor_unusual",
+        capability="monitor_unusual",
+        target="monitor_stocks",
+        # 与重点监控同窗口同节拍（同一业务域、同一张表、同一写入器），
+        # 但**独立任务**：能力不同（响应形状不同），且 severe 是多页取数。
+        window=Window("postmarket", "17:00", "18:00"),
+        interval_seconds=1800,
+        idempotency_key=_default_key,
+        args_builder=_monitor_unusual_args,
     ),
     IngestTaskDef(
         name="market_sentiment",

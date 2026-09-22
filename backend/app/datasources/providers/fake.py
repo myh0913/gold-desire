@@ -140,6 +140,49 @@ def default_payloads() -> dict[str, Any]:
         "opening_match": {
             "matches": [{"price": 39.1, "volume": 5200.0, "time_label": "09:25"}]
         },
+        "monitor_stocks": {
+            "data": [
+                {
+                    "STKCODE": "600519",
+                    "MARKET": "1",
+                    "STKNAME": "贵州茅台",
+                    "VALIDATESTARTDATE": "2026-09-22",
+                    "VALIDATEENDDATE": "2026-10-13",
+                    "LINK_URL": "https://example.test/notice/1",
+                },
+                {
+                    "STKCODE": "513390",
+                    "MARKET": "1",
+                    "STKNAME": "纳指基金",
+                    "VALIDATESTARTDATE": "2026-09-22",
+                    "VALIDATEENDDATE": "2026-10-13",
+                },
+            ]
+        },
+        "monitor_unusual": {
+            "code": 0,
+            "message": "ok",
+            "success": True,
+            "result": {
+                "count": 1,
+                "pages": 1,
+                "data": [
+                    {
+                        "SECUCODE": "000017.SZ",
+                        "SECURITY_CODE": "000017",
+                        "SECURITY_NAME_ABBR": "深中华A",
+                        "UNUSUAL_TYPE": "002",
+                        "MRAKET_TYPE": "深交所",
+                        "START_DATE": "2026-08-20 00:00:00",
+                        "END_DATE": "2026-09-02 00:00:00",
+                        "NOTICE_DATE": "2026-09-03 00:00:00",
+                        "INFO_CODE": "AN202609021828934217",
+                        "UNUSUAL_REASON": "公司股票连续 10 个交易日收盘价格涨幅偏离值累计达到 100%",
+                        "UNUSUAL_REASON_TYPE": "连续10个交易日内日收盘价格涨幅偏离值累计达到100%",
+                    }
+                ],
+            },
+        },
     }
 
 
@@ -161,6 +204,8 @@ class FakeProvider(BaseProvider):
         "newsflash",
         "minute_bars",
         "opening_match",
+        "monitor_stocks",
+        "monitor_unusual",
     )
     rate_limit_per_min: ClassVar[int] = 600
 

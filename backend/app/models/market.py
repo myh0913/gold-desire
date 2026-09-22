@@ -248,9 +248,7 @@ class CycleJudgement(SourceMixin, Base):
     """
 
     __tablename__ = "cycle_judgements"
-    __table_args__ = (
-        UniqueConstraint("trade_date", name="uq_cycle_judgements_trade_date"),
-    )
+    __table_args__ = (UniqueConstraint("trade_date", name="uq_cycle_judgements_trade_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True, doc="交易日")
@@ -352,7 +350,7 @@ class ThemeStock(SourceMixin, Base):
 
 
 class MonitorStock(SourceMixin, Base):
-    """监管名单（重点监控 / 严重异常波动）。"""
+    """监管名单（重点监控 / 异常波动）。"""
 
     __tablename__ = "monitor_stocks"
     __table_args__ = (
@@ -364,11 +362,29 @@ class MonitorStock(SourceMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, doc="交易日")
     kind: Mapped[str] = mapped_column(
-        String(32), nullable=False, doc="类型：key_monitor/severe_unusual"
+        String(32),
+        nullable=False,
+        doc="类型：restricted=重点监控 / severe=严重异常波动 / unusual=普通异常波动",
     )
     code: Mapped[str] = mapped_column(String(16), nullable=False, doc="证券代码")
     name: Mapped[str] = mapped_column(String(64), nullable=False, doc="证券简称")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True, doc="监控原因")
+    start_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True, doc="起始日：监控期起 / 异动区间起"
+    )
+    end_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True, doc="截止日：监控期止 / 异动区间止"
+    )
+    notice_date: Mapped[date | None] = mapped_column(Date, nullable=True, doc="公告日")
+    info_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, doc="公告编号（如 AN202609021828934217）"
+    )
+    reason_type: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, doc="原因分类（交易所口径的异动类型描述）"
+    )
+    link_url: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, doc="公告链接（重点监控名单携带）"
+    )
 
 
 class LadderRow(SourceMixin, Base):

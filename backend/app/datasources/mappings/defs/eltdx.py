@@ -20,7 +20,8 @@ _MINUTE_BAR = CapabilityMapping(
     capability="minute_bars",
     record_path="points",
     notes="分时分钟点：time_label 零填充 HH:MM / price 元 / volume 手（分钟增量）；"
-    "minute_index 由记录序号派生；amount_yuan eltdx 不提供，留空",
+    "minute_index 由记录序号派生；amount_yuan 来自 1m K 线（provider 按 time_label "
+    "对齐附加，K 线缺失时为 None）",
     fields=(
         FieldMap("code", None, "identity", context="args.thscode"),
         FieldMap("trade_date", None, "str_to_date", context="args.date"),

@@ -61,6 +61,22 @@ def default_payloads() -> dict[str, Any]:
                 ]
             }
         },
+        # 涨停池补数轮（supplement）：与 limit_up_pool 同形状（fake 兜底用），
+        # 映射按 hithink 字段名（thscode/seal_money 元）。
+        "limit_up_pool_supplement": {
+            "data": {
+                "item": [
+                    {
+                        "thscode": "300750.SZ",
+                        "name": "宁德时代",
+                        "continue_day_cnt": 3,
+                        "limit_up_time": "09:31",
+                        "seal_money": 12345000.0,
+                        "max_seal_money": 23456000.0,
+                    }
+                ]
+            }
+        },
         "ladder": {
             "matrix": [
                 {
@@ -196,6 +212,7 @@ class FakeProvider(BaseProvider):
     capabilities: ClassVar[tuple[str, ...]] = (
         "daily_bars",
         "limit_up_pool",
+        "limit_up_pool_supplement",
         "ladder",
         "trading_calendar",
         "market_sentiment",

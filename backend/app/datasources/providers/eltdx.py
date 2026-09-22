@@ -113,6 +113,24 @@ class EltdxProvider(BaseProvider):
         date = self._require(args, "date")
         return await asyncio.to_thread(self._fetch_sync, capability, thscode, date)
 
+    def _minute_amounts(self, client: Any, code: str, date: str, today: str) -> dict[str, float]:
+        """取当日 1m K 线的 ``time_label → amount(元)`` 映射。
+
+        分时点对象（``client.minutes``）不带成交额，1m K 线（``client.bars.get``）
+        每根自带 ``amount``。两路时间标签一一对应（09:31~15:00 各 240 根）。
+        K 线拉取失败时返回空映射（amount 留空，不影响分时主数据）。
+        """
+        try:
+            bars = client.bars.get(code, period="1m", count=240)
+            items = list(getattr(bars, "bars", []) or [])
+            return {
+                getattr(b, "time", "").strftime("%H:%M"): float(getattr(b, "amount", 0.0) or 0.0)
+                for b in items
+                if getattr(b, "time", None) is not None
+            }
+        except Exception:  # noqa: BLE001 - amount 为附加信息，失败不阻断分时主数据
+            return {}
+
     def _fetch_sync(self, capability: str, thscode: str, date: str) -> dict[str, Any]:
         client = self._get_client()
         code = to_eltdx_code(thscode)
@@ -123,12 +141,17 @@ class EltdxProvider(BaseProvider):
                     client.minutes.today(code) if date == today else client.minutes.history(code, date)
                 )
                 points = getattr(series, "points", None) or []
+                # 分时点对象不带成交额；1m K 线（client.bars.get）每根自带 amount（元）。
+                # 按 time_label 对齐把 amount 附加到分时点上（对齐 quant 的 eltdx_source
+                # minute_bars 口径：b.amount 即该分钟成交额）。
+                amounts = self._minute_amounts(client, code, date, today)
                 return {
                     "points": [
                         {
                             "time_label": str(getattr(p, "time_label", "") or ""),
                             "price": float(getattr(p, "price", 0) or 0),
                             "volume": float(getattr(p, "volume", 0) or 0),
+                            "amount": amounts.get(str(getattr(p, "time_label", "") or "")),
                         }
                         for p in points
                     ]

@@ -386,7 +386,6 @@ async def seed_market(factory: async_sessionmaker[AsyncSession]) -> dict[str, An
                     "pct": Decimal("0.0521"),
                     "turnover_rate": Decimal("0.0812"),
                     "continue_days": 3,
-                    "selected_at": datetime(2026, 6, 3, 15, 0, tzinfo=UTC),
                     "source": "fake",
                 }
             ],

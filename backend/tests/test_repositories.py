@@ -358,7 +358,6 @@ async def test_run_retention_news_themes_monitor_pools(session: AsyncSession) ->
                 pct=Decimal("0.05"),
                 turnover_rate=Decimal("0.1"),
                 continue_days=None,
-                selected_at=None,
                 source="t",
             )
         )

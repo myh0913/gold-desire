@@ -381,8 +381,16 @@ async def test_run_once_window_filter(factory: async_sessionmaker[AsyncSession])
     )
     results = await sched.run_once(window="trading_hours")
     # 交易时段窗口承载四个页面的数据源任务（各自 interval 不同），
-    # 显式指定窗口时不受当前时刻限制。
-    expected = {"limit_up_pool", "theme_rank", "theme_stocks", "ladder", "market_sentiment"}
+    # 显式指定窗口时不受当前时刻限制；limit_up_pool_supplement 为第 8 轮
+    # 补数任务（同窗口同节奏，hithink 合并回填封单金额）。
+    expected = {
+        "limit_up_pool",
+        "limit_up_pool_supplement",
+        "theme_rank",
+        "theme_stocks",
+        "ladder",
+        "market_sentiment",
+    }
     assert {result.task for result in results} == expected
 
     async with factory() as session:
@@ -411,10 +419,11 @@ async def test_interval_task_reruns_after_success_within_window(
     )
 
     first = await sched.run_once()
-    # 09:26:02：auction（撮合）+ trading_hours（涨停池/主题/天梯/情绪）+ 全天快讯 + 日历
+    # 09:26:02：auction（撮合）+ trading_hours（涨停池/补数/主题/天梯/情绪）+ 全天快讯 + 日历
     assert {result.task for result in first} == {
         "trading_calendar",
         "limit_up_pool",
+        "limit_up_pool_supplement",
         "opening_match",
         "newsflash",
         "theme_rank",

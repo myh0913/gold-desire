@@ -110,6 +110,7 @@ class LimitUpPoolOut(BaseModel):
     continue_days: int
     limit_up_time: str | None = None
     seal_amount_yuan: float | None = None
+    max_seal_amount_yuan: float | None = None
     open_times: int | None = None
     turnover_rate: float | None = None
     amount_yuan: float | None = None
@@ -270,7 +271,6 @@ class ThemeStockOut(BaseModel):
     pct: float
     turnover_rate: float
     continue_days: int | None = None
-    selected_at: datetime | None = None
 
 
 class ThemeStocksResponse(MarketMeta):

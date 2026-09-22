@@ -148,6 +148,9 @@ class LimitUpPool(SourceMixin, Base):
     seal_amount_yuan: Mapped[Decimal | None] = mapped_column(
         Numeric(20, 2), nullable=True, doc="封单金额（元）；源缺失为 NULL"
     )
+    max_seal_amount_yuan: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2), nullable=True, doc="最大封单金额（元）；源缺失为 NULL"
+    )
     open_times: Mapped[int | None] = mapped_column(
         Integer, nullable=True, doc="开板次数；源缺失为 NULL"
     )
@@ -343,9 +346,6 @@ class ThemeStock(SourceMixin, Base):
     )
     continue_days: Mapped[int | None] = mapped_column(
         Integer, nullable=True, doc="连板天数；非连板或源缺失为 NULL"
-    )
-    selected_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, doc="入选时间"
     )
 
 

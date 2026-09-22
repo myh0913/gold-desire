@@ -62,6 +62,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _MAINTENANCE_KEY = "__daily_maintenance__"
+_POOL_AMOUNT_KEY = "__pool_amount__"
 _STATE_POOL_PREFIX = "ingest_state"
 
 
@@ -362,10 +363,48 @@ class IngestScheduler:
                 executed.append(result)
 
             await self._maybe_maintenance(repos, session, target_date, moment, window)
+            await self._maybe_pool_amount(repos, session, target_date, moment, window)
             await self._maybe_strategies(repos, target_date, moment, window)
             await self._maybe_opening(repos, target_date, moment, window)
             await session.commit()
         return executed
+
+    async def _maybe_pool_amount(
+        self,
+        repos: Repositories,
+        session: AsyncSession,
+        trade_date: date,
+        now: datetime,
+        window: str | Window | None,
+    ) -> None:
+        """盘后窗口内执行一次涨停池成交额聚合（minute_bars → limit_up_pool）。
+
+        池端点（xuangutong）不提供成交额；eltdx 分时每分钟自带 amount。收盘后
+        分钟数据完整，此时按 ``(code, trade_date)`` 求和回填当日全部池型的
+        ``amount_yuan``（幂等，见 ``LimitUpPoolRepository.aggregate_amount_from_minutes``）。
+        """
+        if window is not None:
+            name = window.name if isinstance(window, Window) else str(window)
+            if name != "postmarket":
+                return
+        elif not in_window(now, self._window("postmarket")):
+            return
+        if await _state_status(repos, _POOL_AMOUNT_KEY, trade_date) == "succeeded":
+            return
+        try:
+            updated = await repos.limit_up_pool.aggregate_amount_from_minutes(trade_date)
+            await _state_mark(repos, _POOL_AMOUNT_KEY, trade_date, "succeeded")
+            logger.info(
+                "pool_amount_aggregated",
+                extra={"trade_date": trade_date.isoformat(), "rows": updated},
+            )
+        except Exception as exc:
+            logger.exception(
+                "pool_amount_aggregation_failed",
+                extra={"trade_date": trade_date.isoformat(), "error": str(exc)},
+            )
+            await _state_mark(repos, _POOL_AMOUNT_KEY, trade_date, "failed")
+        await session.commit()
 
     async def _maybe_strategies(
         self,

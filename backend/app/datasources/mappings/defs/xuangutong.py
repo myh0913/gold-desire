@@ -88,6 +88,7 @@ _LIMIT_UP_STOCK = CapabilityMapping(
         FieldMap("reason", "surge_reason.stock_reason", "to_str", required=False),
         FieldMap("plates", "surge_reason.related_plates", "identity", required=False),
         FieldMap("timeline", "limit_timeline.items", "identity", required=False),
+        FieldMap("list_date", "listed_date", "sec_to_date", required=False),
     ),
 )
 

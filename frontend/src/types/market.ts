@@ -112,6 +112,7 @@ export interface PoolOut {
   continue_days: number;
   limit_up_time: string | null;
   seal_amount_yuan: number | null;
+  max_seal_amount_yuan: number | null;
   open_times: number | null;
   turnover_rate: number | null;
   amount_yuan: number | null;
@@ -235,7 +236,6 @@ export interface ThemeStockOut {
   pct: number;
   turnover_rate: number;
   continue_days: number | null;
-  selected_at: string | null;
 }
 
 /** 某日某主题的成分股。 */

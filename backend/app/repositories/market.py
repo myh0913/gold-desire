@@ -49,6 +49,7 @@ _LIMIT_UP_UPDATE = (
     "continue_days",
     "limit_up_time",
     "seal_amount_yuan",
+    "max_seal_amount_yuan",
     "open_times",
     "turnover_rate",
     "amount_yuan",
@@ -95,7 +96,6 @@ _THEME_STOCK_UPDATE = (
     "pct",
     "turnover_rate",
     "continue_days",
-    "selected_at",
     "source",
 )
 _MONITOR_CONFLICT = ("trade_date", "kind", "code")
@@ -122,6 +122,28 @@ class StockRepository(BaseRepository):
     async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
         """按 ``code`` 幂等覆盖写入股票基础信息。"""
         return await self.bulk_upsert(Stock, rows, _STOCK_CONFLICT, _STOCK_UPDATE)
+
+    async def backfill_list_date(self, rows: Sequence[Mapping[str, Any]]) -> int:
+        """只回填 ``list_date`` 列（按 code 命中，不覆盖其他列、不插入新行）。
+
+        上市日期来自 xuangutong 涨停池的 ``listed_date``（秒级时间戳），在池采集
+        写入器里顺带补写——``stocks`` 行由 daily_bars 路径的
+        ``_candidate_profiles`` 创建（无上市日期），此处仅补齐。
+        """
+        updated = 0
+        for row in rows:
+            code = row.get("code")
+            list_date = row.get("list_date")
+            if not code or list_date is None:
+                continue
+            stmt = (
+                update(Stock)
+                .where(Stock.code == code, Stock.list_date.is_(None))
+                .values(list_date=list_date)
+            )
+            result = await self.session.execute(stmt)
+            updated += int(getattr(result, "rowcount", 0) or 0)
+        return updated
 
     async def get(self, code: str) -> Stock | None:
         """按证券代码取单只股票。"""
@@ -257,6 +279,46 @@ class LimitUpPoolRepository(BaseRepository):
         """按 ``(trade_date, pool_type, code)`` 幂等覆盖写入涨停池。"""
         return await self.bulk_upsert(LimitUpPool, rows, _LIMIT_UP_CONFLICT, _LIMIT_UP_UPDATE)
 
+    async def merge_supplement(
+        self, trade_date: date, rows: Sequence[Mapping[str, Any]], columns: Sequence[str]
+    ) -> int:
+        """**合并补数**：只更新既有行的指定列，不插入新行、不覆盖其他列。
+
+        用于 hithink 第 8 轮补数场景：xuangutong 主源写入的当日涨停池行缺
+        封单金额/最大封单金额，hithink 端点有这几个字段——按
+        ``(trade_date, pool_type, code)`` 命中后仅回填 ``columns`` 列，主源的
+        涨停原因/时间线/量比等字段不受影响。**未命中的行忽略**（hithink 池
+        口径与主源略有出入属正常，不强行插入）。
+
+        Args:
+            trade_date: 目标交易日。
+            rows: 补数行（须含冲突键列 + ``columns`` 列）。
+            columns: 只回填这些列（如 ``seal_amount_yuan``）。
+
+        Returns:
+            实际更新的行数。
+        """
+        if not rows:
+            return 0
+        key_cols = ("trade_date", "pool_type", "code")
+        updated = 0
+        for row in rows:
+            stmt = (
+                update(LimitUpPool)
+                .where(
+                    LimitUpPool.trade_date == trade_date,
+                    LimitUpPool.pool_type == row["pool_type"],
+                    LimitUpPool.code == row["code"],
+                )
+                .values(
+                    **{col: row[col] for col in columns if row.get(col) is not None},
+                    source=row.get("source"),
+                )
+            )
+            result = await self.session.execute(stmt)
+            updated += int(getattr(result, "rowcount", 0) or 0)
+        return updated
+
     async def replace_pool(self, trade_date: date, rows: Sequence[Mapping[str, Any]]) -> int:
         """**整批替换**某交易日的涨停池快照（先清后写）。
 
@@ -311,6 +373,47 @@ class LimitUpPoolRepository(BaseRepository):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def aggregate_amount_from_minutes(self, trade_date: date) -> int:
+        """**盘后聚合**：当日 minute_bars 的 amount_yuan 求和回填涨停池成交额。
+
+        xuangutong 池端点不提供成交额；eltdx 分时（1m K 线）每分钟自带 amount。
+        本方法在 SQL 端按 ``(code, trade_date)`` 聚合分钟成交额，回填到当日
+        **全部池型**的 ``amount_yuan`` 列（同票多池型各自独立成行，均应回填）。
+
+        只更新 ``amount_yuan IS NULL`` 或与聚合值不一致的行（幂等，重复执行无害）。
+        分钟数据缺失的票不更新（保持 NULL，「能算的算、算不出的留空」）。
+
+        Returns:
+            实际更新的行数。
+        """
+        stmt = (
+            update(LimitUpPool)
+            .where(
+                LimitUpPool.trade_date == trade_date,
+                LimitUpPool.code.in_(
+                    select(MinuteBar.code)
+                    .where(
+                        MinuteBar.trade_date == trade_date,
+                        MinuteBar.amount_yuan.isnot(None),
+                    )
+                    .distinct()
+                ),
+            )
+            .values(
+                amount_yuan=func.coalesce(
+                    select(func.sum(MinuteBar.amount_yuan))
+                    .where(
+                        MinuteBar.trade_date == trade_date,
+                        MinuteBar.code == LimitUpPool.code,
+                    )
+                    .scalar_subquery(),
+                    LimitUpPool.amount_yuan,
+                )
+            )
+        )
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def filter_by_continue_days(self, trade_date: date, min_days: int) -> list[LimitUpPool]:
         """取某日连板天数 ``>= min_days`` 的记录，按连板天数降序。"""
@@ -579,6 +682,46 @@ class LadderRepository(BaseRepository):
     async def upsert_many(self, rows: Sequence[Mapping[str, Any]]) -> int:
         """按 ``(trade_date, code)`` 幂等覆盖写入天梯。"""
         return await self.bulk_upsert(LadderRow, rows, _LADDER_CONFLICT, _LADDER_UPDATE)
+
+    async def backfill_first_seal_from_pool(self, trade_date: date) -> int:
+        """从当日涨停池回填天梯 ``first_seal_time``（按 code 对齐）。
+
+        hithink ladder 端点不返回首次封板时间（实测仅 ``board_num`` /
+        ``seal_nextday`` / ``sign_level``），该列曾为死映射恒 NULL。涨停池的
+        ``limit_up_time``（xuangutong ``first_limit_up``，秒级时间戳）同日同票
+        可用——本方法在 SQL 端按 ``(trade_date, code)`` 命中回填，仅更新
+        ``first_seal_time IS NULL`` 的行（池数据后到时可再次补齐，幂等）。
+
+        Returns:
+            实际更新的行数。
+        """
+        stmt = (
+            update(LadderRow)
+            .where(
+                LadderRow.trade_date == trade_date,
+                LadderRow.first_seal_time.is_(None),
+                LadderRow.code.in_(
+                    select(LimitUpPool.code)
+                    .where(
+                        LimitUpPool.trade_date == trade_date,
+                        LimitUpPool.limit_up_time.isnot(None),
+                    )
+                    .distinct()
+                ),
+            )
+            .values(
+                first_seal_time=select(LimitUpPool.limit_up_time)
+                .where(
+                    LimitUpPool.trade_date == trade_date,
+                    LimitUpPool.code == LadderRow.code,
+                    LimitUpPool.limit_up_time.isnot(None),
+                )
+                .limit(1)
+                .scalar_subquery()
+            )
+        )
+        result = await self.session.execute(stmt)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def get_range(
         self, start: date, end: date, min_continue_days: int = 2

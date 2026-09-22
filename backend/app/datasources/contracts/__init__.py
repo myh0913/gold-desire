@@ -62,4 +62,7 @@ CAPABILITY_CONTRACTS: dict[str, type[ContractModel]] = {
     # 监管名单：两个端点形状不同 → 两个能力，共用同一份领域契约。
     "monitor_stocks": MonitorStockContract,
     "monitor_unusual": MonitorStockContract,
+    # 涨停池补数：与 limit_up_pool 同一端点同一形状，但主备链固定 hithink
+    # （xuangutong 主源缺封单金额/最大封单金额，由本能力第 8 轮合并回填）。
+    "limit_up_pool_supplement": LimitUpStockContract,
 }

@@ -52,8 +52,9 @@ _LIMIT_UP_STOCK = CapabilityMapping(
     source_id="hithink",
     capability="limit_up_pool",
     record_path="data.item",
-    notes="涨停池：thscode / name / continue_day_cnt / limit_up_time(HH:MM) / seal_money(元)；"
-    "换手率、成交额、总市值该端点不提供（留空）",
+    notes="涨停池：thscode / name / continue_day_cnt / limit_up_time(HH:MM) / "
+    "seal_money(元) / max_seal_money(元)；换手率、总市值该端点不提供（留空）；"
+    "本源作为 xuangutong 的补数源（封单金额/最大封单金额/首封时间）",
     static={"pool_type": "limit_up"},
     fields=(
         FieldMap("code", "thscode", "normalize_code"),
@@ -61,6 +62,30 @@ _LIMIT_UP_STOCK = CapabilityMapping(
         FieldMap("continue_days", "continue_day_cnt", "to_int"),
         FieldMap("limit_up_time", "limit_up_time", "hhmm_from_str", required=False),
         FieldMap("seal_amount_yuan", "seal_money", "to_float"),
+        FieldMap("max_seal_amount_yuan", "max_seal_money", "to_float", required=False),
+        FieldMap("open_times", "break_limit_up_times", "to_int", required=False),
+        FieldMap("turnover_rate", "turnover_ratio", "ratio_passthrough", required=False),
+        FieldMap("amount_yuan", "amount", "to_float", required=False),
+        FieldMap("market_cap_yuan", "market_cap", "to_float", required=False),
+    ),
+)
+
+#: 涨停池补数轮（第 8 轮）：与 ``limit_up_pool`` 同端点同形状，主备链固定 hithink；
+#: 写入器只合并回填封单金额/最大封单金额/首封时间，不整行替换主源数据。
+_LIMIT_UP_SUPPLEMENT = CapabilityMapping(
+    source_id="hithink",
+    capability="limit_up_pool_supplement",
+    record_path="data.item",
+    notes="涨停池补数：seal_money(元) / max_seal_money(元) / limit_up_time(HH:MM)，"
+    "合并回填当日 limit_up 池行（不插入新行、不覆盖主源其他列）",
+    static={"pool_type": "limit_up"},
+    fields=(
+        FieldMap("code", "thscode", "normalize_code"),
+        FieldMap("name", "name", "to_str"),
+        FieldMap("continue_days", "continue_day_cnt", "to_int"),
+        FieldMap("limit_up_time", "limit_up_time", "hhmm_from_str", required=False),
+        FieldMap("seal_amount_yuan", "seal_money", "to_float"),
+        FieldMap("max_seal_amount_yuan", "max_seal_money", "to_float", required=False),
         FieldMap("open_times", "break_limit_up_times", "to_int", required=False),
         FieldMap("turnover_rate", "turnover_ratio", "ratio_passthrough", required=False),
         FieldMap("amount_yuan", "amount", "to_float", required=False),
@@ -98,6 +123,7 @@ _TRADING_DAY = CapabilityMapping(
 HITHINK_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _DAILY_BAR,
     _LIMIT_UP_STOCK,
+    _LIMIT_UP_SUPPLEMENT,
     _LADDER_ROW,
     _TRADING_DAY,
 )

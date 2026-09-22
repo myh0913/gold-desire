@@ -86,6 +86,9 @@ class LimitUpStockContract(ContractModel):
     seal_amount_yuan: float | None = Field(
         default=None, ge=0, description="封单金额，单位：元；源缺失为 None"
     )
+    max_seal_amount_yuan: float | None = Field(
+        default=None, ge=0, description="盘中最大封单金额，单位：元；源缺失为 None"
+    )
     open_times: int | None = Field(
         default=None, ge=0, description="当日炸板次数，单位：次；源缺失为 None"
     )
@@ -124,6 +127,9 @@ class LimitUpStockContract(ContractModel):
         "（status: 1 封涨停 / 2 炸板 / 3 封跌停 / 4 开跌停）；源缺失为 None",
     )
     pool_type: PoolType = Field(description="池类型：与上游 pool_name 口径一致的 7 种")
+    list_date: date | None = Field(
+        default=None, description="上市日期；源缺失为 None（供 stocks 表顺带补写）"
+    )
 
 
 class LadderRowContract(ContractModel):

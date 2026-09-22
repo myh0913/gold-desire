@@ -30,7 +30,7 @@ import logging
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
@@ -110,19 +110,30 @@ async def fetch_raw(
 ) -> RawPayload:
     """取原始 payload：注入 override 时直连之，否则走 ``resolve_raw``（主备降级）。
 
+    计时填入 ``elapsed_ms``（含主备降级的总耗时）；成功路径 ``http_status``
+    恒 200（失败请求不落 raw_responses，由 ingest_jobs 错误记录承载）。
+
     Args:
         capability: 能力名。
         args: 透传给 ``provider.fetch`` 的取数参数。
         provider_override: 测试/手动注入的 provider；``None`` 走注册表主备链。
     """
+    started = time.perf_counter()
     if provider_override is not None:
         payload = await provider_override.fetch(capability, **args)
         return RawPayload(
             source_id=provider_override.source_id or "override",
             capability=capability,
             payload=payload,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            http_status=200,
         )
-    return await resolve_raw(capability, **args)
+    raw = await resolve_raw(capability, **args)
+    return replace(
+        raw,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        http_status=200,
+    )
 
 
 def contracts_from_raw(
@@ -218,6 +229,8 @@ async def run_task(
                 trade_date=trade_date,
                 payload=raw.payload,
                 sha256=_payload_sha256(raw.payload),
+                elapsed_ms=raw.elapsed_ms,
+                http_status=raw.http_status,
             )
             contracts = contracts_from_raw(raw, dict(args))
             rows += await writer(repos, contracts, trade_date, raw.source_id)

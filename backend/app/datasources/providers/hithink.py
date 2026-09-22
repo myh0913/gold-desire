@@ -82,6 +82,7 @@ class HithinkProvider(BaseProvider):
     capabilities: ClassVar[tuple[str, ...]] = (
         "daily_bars",
         "limit_up_pool",
+        "limit_up_pool_supplement",
         "ladder",
         "trading_calendar",
     )
@@ -130,7 +131,8 @@ class HithinkProvider(BaseProvider):
                     "adjust": str(args.get("adjust", "none")),
                 },
             )
-        if capability == "limit_up_pool":
+        if capability in ("limit_up_pool", "limit_up_pool_supplement"):
+            # supplement 与主能力同一端点；区别只在主备链（supplement 固定 hithink）
             params: dict[str, Any] = {
                 "page": int(args.get("page", 1)),
                 "size": int(args.get("size", 200)),

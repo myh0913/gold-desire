@@ -49,6 +49,23 @@ _LIMIT_UP_STOCK = CapabilityMapping(
     ),
 )
 
+#: 涨停池补数轮（fake 兜底）：与 hithink supplement 同形状（thscode / seal_money 元）。
+_FAKE_LIMIT_UP_SUPPLEMENT = CapabilityMapping(
+    source_id="fake",
+    capability="limit_up_pool_supplement",
+    record_path="data.item",
+    notes="涨停池补数（fake）：thscode / seal_money(元) / max_seal_money(元) / limit_up_time",
+    static={"pool_type": "limit_up"},
+    fields=(
+        FieldMap("code", "thscode", "normalize_code"),
+        FieldMap("name", "name", "to_str"),
+        FieldMap("continue_days", "continue_day_cnt", "to_int"),
+        FieldMap("limit_up_time", "limit_up_time", "hhmm_from_str", required=False),
+        FieldMap("seal_amount_yuan", "seal_money", "to_float"),
+        FieldMap("max_seal_amount_yuan", "max_seal_money", "to_float", required=False),
+    ),
+)
+
 _LADDER_ROW = CapabilityMapping(
     source_id="fake",
     capability="ladder",
@@ -210,6 +227,7 @@ _FAKE_MONITOR_UNUSUAL = CapabilityMapping(
 FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _DAILY_BAR,
     _LIMIT_UP_STOCK,
+    _FAKE_LIMIT_UP_SUPPLEMENT,
     _LADDER_ROW,
     _TRADING_DAY,
     _MARKET_SENTIMENT,

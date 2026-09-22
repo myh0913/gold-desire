@@ -67,6 +67,19 @@ def _dump(row: ContractModel, source: str) -> dict[str, Any]:
     return {**row.model_dump(), "source": source}
 
 
+#: 契约中不属于 ``limit_up_pool`` 表的列（``list_date`` 属于 ``stocks`` 表，
+#: 由写入器剥离后单独喂给 :meth:`StockRepository.backfill_list_date`）。
+_NON_POOL_COLUMNS = frozenset({"list_date"})
+
+
+def _strip_non_pool_columns(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """剥离池表没有的契约列，避免 bulk_upsert 报 Unconsumed column names。"""
+    return [
+        {key: value for key, value in row.items() if key not in _NON_POOL_COLUMNS}
+        for row in rows
+    ]
+
+
 async def _write_daily_bars(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
@@ -77,9 +90,14 @@ async def _write_daily_bars(
 async def _write_limit_up_pool(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
-    """涨停池：契约无 ``trade_date``，由任务参数补入，按 ``(trade_date,pool_type,code)`` 幂等。"""
+    """涨停池：契约无 ``trade_date``，由任务参数补入，按 ``(trade_date,pool_type,code)`` 幂等。
+
+    契约的 ``list_date``（xuangutong ``listed_date``）不属于池表——剥离后喂给
+    ``stocks.backfill_list_date``（只补 ``stocks.list_date`` 的 NULL 行）。
+    """
     payload = [{**_dump(row, source), "trade_date": trade_date} for row in rows]
-    return await repos.limit_up_pool.upsert_many(payload)
+    await repos.stocks.backfill_list_date(payload)
+    return await repos.limit_up_pool.upsert_many(_strip_non_pool_columns(payload))
 
 
 async def _replace_limit_up_pool(
@@ -90,16 +108,56 @@ async def _replace_limit_up_pool(
     与 :func:`_write_limit_up_pool` 的区别只在写入语义：本写入器先删除当日该
     ``pool_type`` 的旧行再写入，因此「本轮已掉出池子」的票不会残留（例如先涨停
     后炸板）。空结果不触发删除，见 ``LimitUpPoolRepository.replace_pool``。
+
+    顺带把 xuangutong 池返回的 ``listed_date`` 回填到 ``stocks.list_date``
+    （只补 NULL 行，不覆盖既有值；``stocks`` 行由 daily_bars 路径创建）。
     """
     payload = [{**_dump(row, source), "trade_date": trade_date} for row in rows]
-    return await repos.limit_up_pool.replace_pool(trade_date, payload)
+    await repos.stocks.backfill_list_date(payload)
+    return await repos.limit_up_pool.replace_pool(trade_date, _strip_non_pool_columns(payload))
+
+
+#: 涨停池补数轮只回填 hithink 独有的这几列（不覆盖主源 xuangutong 的其他字段）。
+_LIMIT_UP_SUPPLEMENT_COLUMNS = ("seal_amount_yuan", "max_seal_amount_yuan", "limit_up_time")
+
+
+async def _merge_limit_up_supplement(
+    repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
+) -> int:
+    """涨停池补数（第 8 轮）：**合并回填**当日 limit_up 池行的封单金额等列。
+
+    xuangutong 主源不提供封单金额/最大封单金额，hithink 端点有——本写入器按
+    ``(trade_date, pool_type, code)`` 命中既有行后只回填
+    :data:`_LIMIT_UP_SUPPLEMENT_COLUMNS`，不插入新行、不覆盖主源的涨停原因/
+    时间线/量比等列。未命中的行忽略（两源池口径略有出入属正常）。
+    """
+    payload = [{**_dump(row, source), "trade_date": trade_date} for row in rows]
+    return await repos.limit_up_pool.merge_supplement(
+        trade_date, payload, _LIMIT_UP_SUPPLEMENT_COLUMNS
+    )
 
 
 async def _write_ladder(
     repos: Repositories, rows: Sequence[ContractModel], trade_date: date, source: str
 ) -> int:
-    """连板天梯：按 ``(trade_date, code)`` 幂等。"""
-    return await repos.ladder.upsert_many([_dump(row, source) for row in rows])
+    """连板天梯：按 ``(trade_date, code)`` 幂等。
+
+    写入后从**已入库的涨停池**按 code 回填 ``first_seal_time``——hithink ladder
+    端点不返回首次封板时间（该字段在 ladder 映射中为死映射），涨停池的
+    ``limit_up_time`` 同日同票可用（对齐 quant 前端「封板时间」取池数据的口径）。
+    一次拉取覆盖约 30 个交易日，对本轮涉及的全部日期逐日回填（幂等，只补 NULL）。
+    """
+    written = await repos.ladder.upsert_many([_dump(row, source) for row in rows])
+    dates = sorted(
+        {
+            day
+            for row in rows
+            if (day := getattr(row, "trade_date", None)) is not None
+        }
+    )
+    for day in dates:
+        await repos.ladder.backfill_first_seal_from_pool(day)
+    return written
 
 
 async def _write_market_sentiment(
@@ -296,6 +354,7 @@ WRITERS: dict[str, WriterFn] = {
     "daily_bars": _write_daily_bars,
     "limit_up_pool": _write_limit_up_pool,
     "limit_up_pool_replace": _replace_limit_up_pool,
+    "limit_up_pool_supplement": _merge_limit_up_supplement,
     "ladder": _write_ladder,
     "market_sentiment": _write_market_sentiment,
     "market_sentiment_cycle": _write_market_sentiment_with_cycle,
@@ -413,6 +472,15 @@ async def _limit_up_pool_args(trade_date: date, repos: Repositories) -> list[dic
         }
         for pool_type in POOL_TYPES
     ]
+
+
+async def _limit_up_supplement_args(trade_date: date, repos: Repositories) -> list[dict[str, Any]]:
+    """涨停池补数取数参数：hithink 单轮（该源只有涨停池，不支持池型）。
+
+    与 :func:`_limit_up_pool_args` 的 7 轮不同，本任务只有 1 轮；``date_ms``
+    为 hithink 端点的目标日期参数（当日实时 / 历史归档同参）。
+    """
+    return [{"date_ms": date_ms(trade_date)}]
 
 
 #: 日线标的回看窗口（自然日）：从近期涨停池/天梯推导「策略相关票」。
@@ -556,6 +624,19 @@ DEFAULT_TASKS: tuple[IngestTaskDef, ...] = (
         interval_seconds=600,
         idempotency_key=_default_key,
         args_builder=_limit_up_pool_args,
+    ),
+    IngestTaskDef(
+        name="limit_up_pool_supplement",
+        capability="limit_up_pool_supplement",
+        # 第 8 轮补数：主源 xuangutong 不提供封单金额/最大封单金额，本任务固定走
+        # hithink（主备链仅 hithink），把 seal_amount_yuan / max_seal_amount_yuan /
+        # limit_up_time **合并回填**到当日 limit_up 池行——不插入新行、不覆盖主源
+        # 的涨停原因/时间线等列。与主任务同窗口同节奏，每轮紧跟其后执行。
+        target="limit_up_pool_supplement",
+        window=Window("trading_hours", "09:25", "15:05", breaks=(("11:30", "13:00"),)),
+        interval_seconds=600,
+        idempotency_key=_default_key,
+        args_builder=_limit_up_supplement_args,
     ),
     IngestTaskDef(
         name="newsflash",

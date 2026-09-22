@@ -40,6 +40,9 @@ REAL_CAPABILITY_PROVIDERS: dict[str, list[str]] = {
     # 封板时间线/封单比），hithink 同能力字段较少（无涨停原因、现价、涨幅），
     # 保留为备源以便选股通故障时自动降级。
     "limit_up_pool": ["xuangutong", "hithink", "fake"],
+    # 涨停池补数轮：固定 hithink（该端点独有封单金额/最大封单金额），
+    # 写入器只合并回填这几列，不整行替换主源数据。
+    "limit_up_pool_supplement": ["hithink", "fake"],
     "ladder": ["hithink", "fake"],
     "trading_calendar": ["hithink", "fake"],
     "market_sentiment": ["xuangutong", "fake"],

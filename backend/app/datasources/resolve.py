@@ -61,6 +61,10 @@ class RawPayload:
     source_id: str
     capability: str
     payload: dict[str, Any]
+    #: 请求耗时（毫秒）；由 :func:`app.ingest.pipeline.fetch_raw` 计时填入。
+    elapsed_ms: int | None = None
+    #: HTTP 状态码；成功路径恒 200（失败请求不落库，由任务错误记录承载）。
+    http_status: int | None = None
 
 
 def set_replay_source(reader: ReplayReader | None) -> None:

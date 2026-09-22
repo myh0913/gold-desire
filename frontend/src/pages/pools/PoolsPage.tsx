@@ -4,7 +4,7 @@
  * 列口径与展开详情对齐参考实现（quant）：
  *
  * - 主表：股票 / 现价 / 涨幅 / 连板 / 换手 / 市值（**流通市值**）/ 封板时间 / 涨停原因 + 板块标签
- * - 展开详情：量比 / 封单比 / 总市值 / 流通市值 / 炸板次数 / 封板金额 / 成交额
+ * - 展开详情：量比 / 封单比 / 总市值 / 流通市值 / 炸板次数 / 封板金额 / 最大封板金额 / 成交额
  *   + 封板时间线 + 涨停原因全文 + 关联板块
  *
  * 数据全部**读库**：`GET /api/pools` 一次取回全部池型（切 Tab 不再请求）；
@@ -147,6 +147,7 @@ function PoolDetail({ row }: { row: PoolOut }) {
     { label: '流通市值', value: row.free_cap_yuan != null ? formatAmount(row.free_cap_yuan) : '--' },
     { label: '炸板次数', value: row.open_times != null ? formatNumber(row.open_times) : '--' },
     { label: '封板金额', value: row.seal_amount_yuan != null ? formatAmount(row.seal_amount_yuan) : '--' },
+    { label: '最大封板金额', value: row.max_seal_amount_yuan != null ? formatAmount(row.max_seal_amount_yuan) : '--' },
     { label: '成交额', value: row.amount_yuan != null ? formatAmount(row.amount_yuan) : '--' },
   ];
 

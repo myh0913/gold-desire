@@ -68,14 +68,15 @@ describe('AdvicePage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('渲染盘后建池候选：标的 / 首阴日 / 连板 / 振幅 / 形态', async () => {
+  it('渲染盘后建池候选：标的 / 首阴日 / 连板 / 形态', async () => {
     setup().render();
 
     expect(await screen.findByTestId('pool-candidate')).toBeInTheDocument();
     expect(screen.getByText('盘后建池（次日参考）')).toBeInTheDocument();
     expect(screen.getByText('2026-06-02')).toBeInTheDocument();
     expect(screen.getByText('尾盘跳水')).toBeInTheDocument();
-    expect(screen.getByText('9.2%')).toBeInTheDocument();
+    // 首阴振幅列已移除（数据口径不对，用户 2026-09-24 指示）
+    expect(screen.queryByText('9.2%')).not.toBeInTheDocument();
   });
 
   it('渲染建议卡片：路次 / 标的 / 买点 / 仓位 / 止损 / 门槛明细', async () => {

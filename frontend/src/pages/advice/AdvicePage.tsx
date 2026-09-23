@@ -150,7 +150,7 @@ function PoolCandidateRow({ item }: { item: DragonPoolItemOut }) {
           <span className="text-sm font-semibold">{item.name ?? item.code}</span>
           <span className="text-muted-foreground ml-2 text-xs">{item.code}</span>
         </div>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
           <div>
             <dt className="text-muted-foreground">首阴日</dt>
             <dd>{item.d_date}</dd>
@@ -158,10 +158,6 @@ function PoolCandidateRow({ item }: { item: DragonPoolItemOut }) {
           <div>
             <dt className="text-muted-foreground">连板数</dt>
             <dd>{item.boards}</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">首阴振幅</dt>
-            <dd>{item.d_amp_pct != null ? formatPercentPlain(item.d_amp_pct, 1) : '--'}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">分时形态</dt>

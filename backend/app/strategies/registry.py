@@ -272,6 +272,7 @@ class StrategyRunResult:
     ok: bool
     output: Any = None
     error: str | None = None
+    gate: Any = None  #: 周期门控决定（被拦下时非空，复盘页据此展示「为什么不推」）
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +336,31 @@ async def _record_failure(
         )
 
 
+async def _cycle_state_for(repos: StrategyRepos | None, trade_date: date) -> CycleState:
+    """取用于门控的当日周期状态。
+
+    优先当日 ``cycle_judgements``；当日未生成（如 09:25 开盘判定早于盘后 judge）
+    回退**最近一条**（=上一交易日盘后定版状态，正是「用昨日定版门控今早开盘」）；
+    都没有 → :attr:`CycleState.UNKNOWN`（evaluate_gate 回退放行，绝不静默禁用）。
+    """
+    cycle_repos = getattr(repos, "cycle_judgements", None) if repos is not None else None
+    if cycle_repos is None:
+        return CycleState.UNKNOWN
+    row = await cycle_repos.get(trade_date)
+    if row is None:
+        row = await cycle_repos.latest()
+    if row is None:
+        return CycleState.UNKNOWN
+    state = str(getattr(row, "state", "") or "")
+    return CycleState(state) if state in CycleState._value2member_map_ else CycleState.UNKNOWN
+
+
+#: 参与周期门控的阶段：产出**买卖建议**的钩子才拦；POOL/SCENE 是观察类，永远放行。
+_GATED_PHASES: frozenset[Phase] = frozenset(
+    {Phase.AUCTION, Phase.OPENING, Phase.INTRADAY, Phase.TAILPAN}
+)
+
+
 async def run_phase(
     phase: Phase,
     ctx_factory: StrategyContextFactory,
@@ -349,9 +375,44 @@ async def run_phase(
 
     Returns:
         逐策略结果与成功/失败计数的 :class:`PhaseRunSummary`。
+
+    Note:
+        周期门控（T-0004 / emotion-cycle 阶段二矩阵结论）：建议类阶段先按
+        ``gate_matrix`` 评估当日周期态，**冰点/退潮等禁买态直接拦下**——不执行钩子、
+        不落建议、WS 无推送（用户侧「情绪不好时满足条件也不推」）；门控决定记在
+        :attr:`StrategyRunResult.gate`，复盘页据此解释「为什么不推」。
     """
     results: list[StrategyRunResult] = []
+    gate_state = await _cycle_state_for(repos, ctx_factory.trade_date)
     for cls in await strategies_with_phase(phase, repos):
+        gate: GateDecision | None = None
+        if phase in _GATED_PHASES:
+            gate = evaluate_gate(cls, gate_state)
+            if not gate.allowed:
+                logger.warning(
+                    "strategy_gate_blocked",
+                    extra={
+                        "strategy_id": cls.strategy_id,
+                        "phase": phase.value,
+                        "state": gate_state.value,
+                        "reason": gate.reason,
+                    },
+                )
+                results.append(
+                    StrategyRunResult(
+                        strategy_id=cls.strategy_id,
+                        ok=True,
+                        output={
+                            "gated": True,
+                            "gate_state": gate_state.value,
+                            "gate_reason": gate.reason,
+                            "advices": [],
+                            "candidates": [],
+                        },
+                        gate=gate,
+                    )
+                )
+                continue
         try:
             ctx = await ctx_factory.create(cls.strategy_id)
             output = await cls().execute(phase, ctx)
@@ -373,5 +434,9 @@ async def run_phase(
                 )
             )
         else:
-            results.append(StrategyRunResult(strategy_id=cls.strategy_id, ok=True, output=output))
+            results.append(
+                StrategyRunResult(
+                    strategy_id=cls.strategy_id, ok=True, output=output, gate=gate
+                )
+            )
     return PhaseRunSummary(phase=phase, trade_date=ctx_factory.trade_date, results=tuple(results))

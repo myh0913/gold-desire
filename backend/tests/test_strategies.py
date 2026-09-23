@@ -18,9 +18,9 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Iterator, Mapping
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 from app.core.config import get_settings
@@ -534,3 +534,124 @@ def test_export_schemas_and_cycle_states() -> None:
     assert canonical == {"冰点", "冰点转折", "修复", "加速/高潮", "分歧", "退潮"}
     assert CycleState.UNKNOWN.value == "未知"
     assert protocol_module.Phase.POOL.value == "pool"
+
+
+# ============================================================ 9. 周期门控接线（T-0004）
+
+
+class GatedIntradayStrategy(BaseStrategy):
+    """门控接线测试：INTRADAY 阶段；退潮禁用 / 修复放行。"""
+
+    strategy_id = "test_gate_wired"
+    label = "门控接线"
+    version = "1.0.0"
+    description = "门控接线测试"
+    phases = frozenset({Phase.INTRADAY})
+    gate_matrix: ClassVar[Mapping[CycleState, GateRule]] = {
+        CycleState.REPAIR: GateRule(True, 1.0),
+        CycleState.RETREAT: GateRule(False, 0.0),
+    }
+
+    async def confirm_intraday(self, ctx: object) -> dict[str, Any]:
+        return {"advices": [{"code": "600001.SH"}]}
+
+
+class GatePoolStrategy(BaseStrategy):
+    """门控接线测试：POOL 阶段（观察类，永远放行）。"""
+
+    strategy_id = "test_gate_pool"
+    label = "门控建池"
+    version = "1.0.0"
+    description = "门控建池测试"
+    phases = frozenset({Phase.POOL})
+    gate_matrix: ClassVar[Mapping[CycleState, GateRule]] = {
+        CycleState.RETREAT: GateRule(False, 0.0),
+    }
+
+    async def build_pool(self, ctx: object) -> dict[str, str]:
+        return {"strategy": self.strategy_id}
+
+
+async def _seed_cycle_state(repos: Repositories, state: CycleState) -> None:
+    """写当日周期判定（模拟盘后 CycleService 产出）。"""
+    await repos.cycle_judgements.upsert_one(
+        {
+            "trade_date": TRADE_DATE,
+            "state": state.value,
+            "reasons": ["test"],
+            "indicators": {},
+            "overheated": False,
+            "relaxed_needs_confirm": False,
+            "data_degraded": False,
+            "position_factor": 0.5,
+            "ran_at": datetime.now(UTC),
+            "source": "test",
+        }
+    )
+    await repos.session.commit()
+
+
+async def test_run_phase_blocks_advice_phase_in_retreat(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """回归（T-0004）：退潮态下建议类钩子被拦——不执行、无建议、带门控原因。"""
+    register_strategy(GatedIntradayStrategy)
+    await _seed_cycle_state(repos, CycleState.RETREAT)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and not result.gate.allowed
+    assert result.output["gated"] is True
+    assert result.output["advices"] == []
+    assert CycleState.RETREAT.value in result.output["gate_reason"]
+
+
+async def test_run_phase_allows_advice_phase_in_repair(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """修复态（放行）：钩子正常执行并产出建议。"""
+    register_strategy(GatedIntradayStrategy)
+    await _seed_cycle_state(repos, CycleState.REPAIR)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and result.gate.allowed
+    assert result.output == {"advices": [{"code": "600001.SH"}]}
+
+
+async def test_run_phase_without_cycle_state_falls_back_open(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """无任何周期判定（UNKNOWN）：按文档化默认放行，绝不静默禁用。"""
+    register_strategy(GatedIntradayStrategy)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and result.gate.allowed
+    assert result.gate.state == CycleState.UNKNOWN
+    assert result.output == {"advices": [{"code": "600001.SH"}]}
+
+
+async def test_run_phase_pool_phase_not_gated_in_retreat(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """POOL 是观察类阶段：退潮态也不拦（建池照常），只有建议类阶段才门控。"""
+    register_strategy(GatePoolStrategy)
+    await _seed_cycle_state(repos, CycleState.RETREAT)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.POOL, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is None
+    assert result.output == {"strategy": "test_gate_pool"}

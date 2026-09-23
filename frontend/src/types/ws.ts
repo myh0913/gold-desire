@@ -19,6 +19,7 @@ export type WsChannel =
   | 'ingest'
   | 'alert'
   | 'sentiment'
+  | 'cycle'
   | 'pool'
   | 'newsflash'
   | 'themes';

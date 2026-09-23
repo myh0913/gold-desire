@@ -211,10 +211,17 @@ async def _write_market_sentiment_with_cycle(
 
     判定失败**不阻断**情绪写入（本任务主职责是落情绪指标），但会记完整堆栈——
     周期缺失时总览显示「暂无周期数据」，不会静默糊过去。
+
+    周期态**变化时经 WS ``cycle`` 频道推送**（T-0004）：盘中 trading_hours 每 10 分钟
+    判一次，状态一旦变化立即通知前端与策略门控消费方（「恶化立即生效」——门控读
+    ``cycle_judgements`` 当日行，无需额外接线）。推送失败不影响判定结果。
     """
+    from app.core.ws_bus import publish_event
     from app.services.cycle import CycleService
 
     written = await _write_market_sentiment(repos, rows, trade_date, source)
+    previous = await repos.cycle_judgements.get(trade_date)
+    prev_state = str(getattr(previous, "state", "") or "") if previous is not None else ""
     try:
         judgement = await CycleService(repos).judge(trade_date)
     except Exception:
@@ -232,6 +239,26 @@ async def _write_market_sentiment_with_cycle(
                 "data_degraded": judgement.data_degraded,
             },
         )
+        if judgement.state.value != prev_state:
+            try:
+                await publish_event(
+                    "cycle",
+                    {
+                        "source": "cycle:judge",
+                        "trade_date": trade_date.isoformat(),
+                        "previous_state": prev_state or None,
+                        "state": judgement.state.value,
+                        "position_factor": judgement.position_factor,
+                        "overheated": judgement.overheated,
+                        "reasons": list(judgement.reasons),
+                        "at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            except Exception:  # pragma: no cover - 推送失败不影响判定
+                logger.warning(
+                    "cycle_state_broadcast_failed",
+                    extra={"trade_date": trade_date.isoformat()},
+                )
     return written
 
 

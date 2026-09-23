@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 #: 全部频道（行情类频道由采集完成事件 / 策略阶段推送薄事件，前端失效重取）。
 ALL_CHANNELS: tuple[str, ...] = (
     "sentiment",
+    "cycle",
     "pool",
     "advice",
     "newsflash",

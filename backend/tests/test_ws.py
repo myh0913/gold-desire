@@ -160,7 +160,14 @@ async def test_subscribe_replaces_channel_set() -> None:
     """``subscribe`` 为设置语义（替换订阅集合）。"""
     manager = ConnectionManager()
     manager.register("c1", FakeSink(), is_admin=False)
-    assert manager.channels_for("c1") == {"sentiment", "pool", "advice", "newsflash", "themes"}
+    assert manager.channels_for("c1") == {
+        "sentiment",
+        "cycle",
+        "pool",
+        "advice",
+        "newsflash",
+        "themes",
+    }
     assert manager.subscribe("c1", ["sentiment"]) == {"sentiment"}
     assert manager.unsubscribe("c1", ["sentiment"]) == set()
 

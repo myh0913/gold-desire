@@ -18,6 +18,7 @@ import { Select } from '@/components/ui/select';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateViews';
 import { StaleNotice } from '@/components/common/StaleNotice';
 import { reportApi } from '@/lib/api';
+import { useCycleQuery } from '@/lib/queries/market';
 import { formatPercentPlain } from '@/lib/format';
 import { getWsClient } from '@/lib/ws';
 import type {
@@ -33,13 +34,13 @@ export const ADVICE_KEYS = {
   pool: ['report', 'dragon_pool'] as const,
 };
 
-/** 订阅 WS `advice` / `pool` 频道：建议或建池候选落库即失效对应查询。 */
+/** 订阅 WS `advice` / `pool` / `cycle` 频道：建议、建池候选或情绪状态变化即失效对应查询。 */
 function useStrategyStream(): void {
   const client = getWsClient();
   const queryClient = useQueryClient();
   useEffect(() => {
     client.connect();
-    client.subscribe(['advice', 'pool']);
+    client.subscribe(['advice', 'pool', 'cycle']);
     const unsubscribe = client.onMessage((message) => {
       if (message.type === 'advice') {
         void queryClient.invalidateQueries({ queryKey: ADVICE_KEYS.list });
@@ -47,12 +48,48 @@ function useStrategyStream(): void {
       if (message.type === 'pool') {
         void queryClient.invalidateQueries({ queryKey: ADVICE_KEYS.pool });
       }
+      if (message.type === 'cycle') {
+        // 盘中情绪状态变化（T-0004）：横幅实时刷新；禁买态下建议被门控不推送
+        void queryClient.invalidateQueries({ queryKey: ['market', 'cycle'] });
+      }
     });
     return () => {
       unsubscribe();
-      client.unsubscribe(['advice', 'pool']);
+      client.unsubscribe(['advice', 'pool', 'cycle']);
     };
   }, [client, queryClient]);
+}
+
+/** 周期态 → 横幅文案。禁买态（冰点/退潮）明示「满足条件也不推送」。 */
+const GATE_BLOCKED_STATES = new Set(['冰点', '退潮']);
+
+function CycleGateBanner() {
+  const { data } = useCycleQuery();
+  const cycle = data?.item ?? null;
+  if (!cycle) return null;
+  const blocked = GATE_BLOCKED_STATES.has(cycle.state);
+  return (
+    <div
+      data-testid="cycle-gate-banner"
+      className={`rounded-md border p-3 text-sm ${
+        blocked
+          ? 'border-destructive/40 bg-destructive/10 text-destructive'
+          : 'bg-muted/40 text-muted-foreground'
+      }`}
+    >
+      当前情绪周期：<span className="font-semibold">{cycle.state}</span>
+      {cycle.position_factor !== null && cycle.position_factor !== undefined && (
+        <span className="ml-2">仓位系数 {Math.round(cycle.position_factor * 100)}%</span>
+      )}
+      {blocked ? (
+        <span className="ml-2 font-medium">
+          —— 禁买期：即使策略满足条件，买点建议也不会推送
+        </span>
+      ) : (
+        <span className="ml-2">—— 交易窗口正常，策略建议实时推送</span>
+      )}
+    </div>
+  );
 }
 
 function asPayload(raw: Record<string, unknown>): DragonAdvicePayload {
@@ -261,6 +298,8 @@ export default function AdvicePage() {
           </Button>
         </div>
       </div>
+
+      <CycleGateBanner />
 
       <DragonPoolSection />
 

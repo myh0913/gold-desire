@@ -59,18 +59,29 @@ async def _state_status(repos: Repositories, phase: Phase, trade_date: date) -> 
 
 
 async def _state_mark(
-    repos: Repositories, phase: Phase, trade_date: date, status: str
+    repos: Repositories,
+    phase: Phase,
+    trade_date: date,
+    status: str,
+    gates: list[dict[str, Any]] | None = None,
 ) -> None:
-    """落库阶段状态（幂等键 ``(trade_date, pool_name)``）。"""
+    """落库阶段状态（幂等键 ``(trade_date, pool_name)``）。
+
+    ``gates`` 为被周期门控拦下的策略列表（T-0004）——复盘页据此解释
+    「当时为什么不推建议」。
+    """
+    payload: dict[str, Any] = {
+        "status": status,
+        "at": datetime.now(UTC).isoformat(),
+    }
+    if gates:
+        payload["gates"] = gates
     await repos.pool_snapshot.upsert_many(
         [
             {
                 "trade_date": trade_date,
                 "pool_name": strategy_state_name(phase),
-                "payload": {
-                    "status": status,
-                    "at": datetime.now(UTC).isoformat(),
-                },
+                "payload": payload,
                 "source": "strategy_hooks",
             }
         ]
@@ -151,8 +162,21 @@ async def run_strategy_phases(
             summary_failed_marker = f"{type(exc).__name__}: {exc}"
         else:
             summary_failed_marker = None
-        status = "succeeded" if summary.failure_count == 0 and summary_failed_marker is None else "failed"
-        await _state_mark(repos, phase, trade_date, status)
+        status = (
+            "succeeded"
+            if summary.failure_count == 0 and summary_failed_marker is None
+            else "failed"
+        )
+        gates = [
+            {
+                "strategy_id": item.strategy_id,
+                "state": str(getattr(item.gate, "state", "")),
+                "reason": str(getattr(item.gate, "reason", "")),
+            }
+            for item in summary.results
+            if item.gate is not None and not getattr(item.gate, "allowed", True)
+        ]
+        await _state_mark(repos, phase, trade_date, status, gates or None)
         logger.info(
             "strategy_phase_done",
             extra={

@@ -1,8 +1,10 @@
 # gold-desire
 
-龙回头策略的量化选股系统：多数据源采集 → 因子计算 → 策略判定 → 前端展示，全链路自动运行。
+A 股短线四策略实盘辅助系统：多数据源采集 → 因子计算 → 策略判定 → 前端展示，全链路自动运行。
 
-> 策略本身的设计（两路买点、门槛、加分项、止损卖出规则）见 [docs/strategy-dragon.md](docs/strategy-dragon.md)（原根目录 README，即代码注释中引用的 "readme §x"）。
+内置策略（`app/strategies/plugins/`）：**龙回头**（dragon）、**首板低吸**（firstboard_dip）、**连板**（lianban）、**竞价抢筹**（auction_grab）。建议实时推送，复盘页按策略回溯胜率与收益。
+
+> 龙回头策略本身的设计（两路买点、门槛、加分项、止损卖出规则）见 [docs/strategy-dragon.md](docs/strategy-dragon.md)（原根目录 README，即代码注释中引用的 "readme §x"）。
 
 ## 架构
 
@@ -15,10 +17,10 @@ backend/  FastAPI + SQLAlchemy + PostgreSQL
   app/datasources/  数据源抽象：providers（取数）+ mappings（字段映射）+ contracts（契约校验）
   app/ingest/       采集调度器（窗口制，systemd 常驻）
   app/factors/      因子注册表 + 内置因子
-  app/strategies/   策略协议 + 插件（plugins/dragon 龙回头）
+  app/strategies/   策略协议 + 插件（plugins/：dragon 龙回头 / firstboard_dip 首板低吸 / lianban 连板 / auction_grab 竞价抢筹）
   app/engine/       样本构造 / 卖出撮合 / 组合模拟
   app/agent/        内置 AI Agent（工具调用）
-frontend/ Astro + React，构建产物 dist 由 Caddy 直接 serve
+frontend/ Vite + React（TanStack Query + WS 实时刷新），构建产物 dist 由 Caddy 直接 serve
 scripts/   运维脚本（部署/启停/升级/备份）
 deploy/    Docker Compose 编排（本机为 systemd 直跑，不用 Docker）
 docs/      架构 / 数据流 / 部署 / 扩展文档

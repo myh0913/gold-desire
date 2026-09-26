@@ -42,8 +42,15 @@ export interface UserOut {
   username: string;
   role: string;
   enabled: boolean;
+  /** 账户本金（元），仅本人可改；null 表示未设置。 */
+  capital_yuan: number | null;
   last_login_at: string | null;
   created_at: string | null;
+}
+
+/** 更新本人资料：本金全量替换语义（null = 清除）。 */
+export interface CapitalUpdate {
+  capital_yuan?: number | null;
 }
 
 /** 当前登录者信息：用户 + 角色 + **由后端注册表派生**的有效页面 key。 */

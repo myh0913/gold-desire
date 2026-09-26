@@ -25,6 +25,8 @@ from app.schemas.review import (
     ReviewAdviceStatsOut,
     ReviewPoolTopOut,
     ReviewResponse,
+    ReviewStrategyStatsOut,
+    ReviewStrategyStatsResponse,
 )
 
 __all__ = ["ReviewService"]
@@ -33,6 +35,13 @@ logger = logging.getLogger(__name__)
 
 #: 建议回溯时向后找可卖日的自然日跨度。
 _SELLABLE_LOOKAHEAD_DAYS = 14
+
+#: 「全部历史」窗口使用的起始日（库里不会有更早的交易日）。
+_ALL_HISTORY_START = date(2000, 1, 1)
+
+#: 策略战绩窗口的默认与上限（自然日）。
+_STRATEGY_STATS_DEFAULT_DAYS = 30
+_STRATEGY_STATS_MAX_DAYS = 730
 
 #: 复盘页天梯头部条数。
 _TOP_LADDER_LIMIT = 10
@@ -93,6 +102,16 @@ class ReviewService:
         ]
 
         advices = await self._advice_outcomes(target)
+        marks = await self._repos.advice_marks.get_by_date(target)
+        bought_keys = {(row.strategy_id, row.code) for row in marks}
+        advices = [
+            item.model_copy(
+                update={
+                    "bought": (item.strategy_id, item.code) in bought_keys
+                }
+            )
+            for item in advices
+        ]
         stats = self._stats(advices)
 
         return ReviewResponse(
@@ -109,6 +128,91 @@ class ReviewService:
             top_ladder=top_ladder,
             advices=advices,
             advice_stats=stats,
+        )
+
+    async def strategy_stats(self, days: int | None) -> ReviewStrategyStatsResponse:
+        """跨日分策略战绩聚合：去重 → 逐条评估 → 按 ``strategy_id`` 聚合。
+
+        - 窗口为自然日，锚定最近一个有建议报告的交易日；``days=0`` 表示全部；
+        - 去重键 = ``(strategy_id, code, path_id, buy_day)``，键相同保留最近
+          一次运行（与单日回溯 ``(code, path_id, buy_day)`` 口径一致，多带
+          策略维度）；
+        - 评估口径与单日回溯相同（:meth:`_evaluate` 日线近似），但按 ``code``
+          预取整段日线再内存切片，避免跨日全量逐条打库。
+        """
+        effective = max(
+            0, min(days if days is not None else _STRATEGY_STATS_DEFAULT_DAYS,
+                   _STRATEGY_STATS_MAX_DAYS)
+        )
+        latest_dates = await self._repos.advice_reports.list_dates(1)
+        if not latest_dates:
+            return ReviewStrategyStatsResponse(days=effective)
+        anchor = latest_dates[0]
+        start = _ALL_HISTORY_START if effective == 0 else anchor - timedelta(days=effective)
+        reports = await self._repos.advice_reports.list_range(start, anchor)
+
+        seen: dict[tuple[str, str, str, date | None], dict[str, Any]] = {}
+        for report in reports:  # trade_date 倒序 + ran_at 倒序 → 首见即最新
+            payload: dict[str, Any] = report.payload or {}
+            code = str(payload.get("code") or "")
+            if not code:
+                continue
+            key = (
+                report.strategy_id,
+                code,
+                str(payload.get("path_id") or ""),
+                _parse_date(payload.get("buy_day")),
+            )
+            if key in seen:
+                continue
+            seen[key] = {
+                "strategy_id": report.strategy_id,
+                "payload": payload,
+                "ran_at": report.ran_at,
+            }
+
+        # 按 code 预取日线：窗口 = [min(buy_day)+1, max(buy_day)+lookahead]
+        windows: dict[str, list[date]] = {}
+        for item in seen.values():
+            buy_day = _parse_date(item["payload"].get("buy_day"))
+            if buy_day is None:
+                continue
+            lo, hi = windows.get(str(item["payload"].get("code") or ""), (buy_day, buy_day))
+            windows[str(item["payload"].get("code") or "")] = (min(lo, buy_day), max(hi, buy_day))
+        bars_cache: dict[str, list[Any]] = {}
+        for code, (lo, hi) in windows.items():
+            bars_cache[code] = list(
+                await self._repos.daily_bars.get_range(
+                    code, lo + timedelta(days=1), hi + timedelta(days=_SELLABLE_LOOKAHEAD_DAYS)
+                )
+            )
+
+        outcomes_by_strategy: dict[str, list[ReviewAdviceOutcomeOut]] = {}
+        for item in seen.values():
+            payload = item["payload"]
+            code = str(payload.get("code") or "")
+            buy_day = _parse_date(payload.get("buy_day"))
+            bars = [
+                bar
+                for bar in bars_cache.get(code, [])
+                if buy_day is not None
+                and buy_day < bar.trade_date <= buy_day + timedelta(days=_SELLABLE_LOOKAHEAD_DAYS)
+            ]
+            outcome = self._evaluate_with_bars(payload, buy_day, item["ran_at"], bars)
+            outcomes_by_strategy.setdefault(item["strategy_id"], []).append(outcome)
+
+        items = [
+            ReviewStrategyStatsOut(
+                strategy_id=strategy_id,
+                **self._stats(outcomes_by_strategy[strategy_id]).model_dump(),
+            )
+            for strategy_id in sorted(outcomes_by_strategy)
+        ]
+        return ReviewStrategyStatsResponse(
+            days=effective,
+            start_date=None if effective == 0 else start,
+            end_date=anchor,
+            items=items,
         )
 
     # ------------------------------------------------------------------ 内部
@@ -148,13 +252,36 @@ class ReviewService:
             if key in seen:
                 continue
             seen.add(key)
-            outcomes.append(await self._evaluate(payload, buy_day, report.ran_at))
+            outcome = await self._evaluate(payload, buy_day, report.ran_at)
+            outcomes.append(
+                outcome.model_copy(update={"strategy_id": report.strategy_id})
+            )
         return outcomes
 
     async def _evaluate(
         self, payload: dict[str, Any], buy_day: date | None, ran_at: datetime | None = None
     ) -> ReviewAdviceOutcomeOut:
-        """按日线口径评估单条建议的结果。
+        """按日线口径评估单条建议的结果（现取日线后委托内存评估）。"""
+        code = str(payload.get("code") or "")
+        bars: list[Any] = []
+        if buy_day is not None and code:
+            bars = list(
+                await self._repos.daily_bars.get_range(
+                    code,
+                    buy_day + timedelta(days=1),
+                    buy_day + timedelta(days=_SELLABLE_LOOKAHEAD_DAYS),
+                )
+            )
+        return self._evaluate_with_bars(payload, buy_day, ran_at, bars)
+
+    def _evaluate_with_bars(
+        self,
+        payload: dict[str, Any],
+        buy_day: date | None,
+        ran_at: datetime | None = None,
+        bars: list[Any] | None = None,
+    ) -> ReviewAdviceOutcomeOut:
+        """日线口径评估的内存纯函数版（``bars`` 为可卖日候选，升序）。
 
         卖出口径由 payload ``sell_price_ref`` 决定（T-0017）：``"open"`` 按
         可卖日**开盘价**了结（J1 竞价抢筹 T+1 开盘卖），缺省/``"close"`` 按
@@ -186,12 +313,9 @@ class ReviewService:
         if buy_day is None or not buy_price or buy_price <= 0:
             return base
 
-        bars = await self._repos.daily_bars.get_range(
-            code, buy_day + timedelta(days=1), buy_day + timedelta(days=_SELLABLE_LOOKAHEAD_DAYS)
-        )
-        if not bars:
+        sell_bar = (bars or [None])[0]
+        if sell_bar is None:
             return base
-        sell_bar = bars[0]
         if stop_price is not None and float(sell_bar.low) <= stop_price:
             return base.model_copy(
                 update={

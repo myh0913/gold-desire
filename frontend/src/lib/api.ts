@@ -12,6 +12,7 @@
 import type {
   ApiErrorBody,
   CaptchaResponse,
+  CapitalUpdate,
   InvitationCreate,
   InvitationOut,
   LoginRequest,
@@ -62,13 +63,15 @@ import type {
 } from '@/types/market';
 import type {
   AdviceLatestResponse,
+  AdviceMarkRequest,
+  AdviceMarksResponse,
   AdviceResponse,
   BacktestRunOut,
   BacktestRunsResponse,
   BacktestRunRequest,
   DragonPoolResponse,
 } from '@/types/report';
-import type { ReviewResponse } from '@/types/review';
+import type { ReviewResponse, ReviewStrategyStatsResponse } from '@/types/review';
 import { APP_BASE } from './appBase';
 import { clearAccessToken, getAccessToken } from './tokenStore';
 
@@ -188,6 +191,8 @@ export const api = {
     refresh: () => request<TokenResponse>('/auth/refresh', { method: 'POST' }),
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
     me: (signal?: AbortSignal) => request<MeResponse>('/auth/me', { signal }),
+    updateMe: (body: CapitalUpdate) =>
+      request<UserOut>('/auth/me', { method: 'PATCH', json: body }),
   },
   admin: {
     users: {
@@ -370,6 +375,18 @@ export const reportApi = {
     request<ReviewResponse>('/review', { params, signal }),
   reviewDates: (signal?: AbortSignal) =>
     request<DatesResponse>('/review/dates', { signal }),
+  /** 跨日分策略战绩聚合（`days=0` 表示全部历史）。 */
+  strategyStats: (days: number, signal?: AbortSignal) =>
+    request<ReviewStrategyStatsResponse>('/review/strategy-stats', {
+      params: { days },
+      signal,
+    }),
+  /** 某交易日已买入标记列表。 */
+  adviceMarks: (date: string, signal?: AbortSignal) =>
+    request<AdviceMarksResponse>('/advice/marks', { params: { date }, signal }),
+  /** 设置/取消已买入（返回该日全量标记，可直接更新缓存）。 */
+  markAdvice: (body: AdviceMarkRequest) =>
+    request<AdviceMarksResponse>('/advice/marks', { json: body }),
   backtestRuns: (signal?: AbortSignal) =>
     request<BacktestRunsResponse>('/backtest/runs', { signal }),
   backtestRun: (runId: string, signal?: AbortSignal) =>

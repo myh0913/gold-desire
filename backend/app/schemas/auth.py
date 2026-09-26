@@ -52,6 +52,7 @@ class UserOut(BaseModel):
     username: str
     role: str
     enabled: bool
+    capital_yuan: float | None = None
     last_login_at: datetime | None = None
     created_at: datetime | None = None
 
@@ -83,6 +84,12 @@ class PasswordReset(BaseModel):
     """管理员重置用户密码。"""
 
     password: str = Field(min_length=8, max_length=256)
+
+
+class CapitalUpdate(BaseModel):
+    """用户自助更新本金：全量替换语义，``null`` 表示清除。"""
+
+    capital_yuan: float | None = Field(default=None, ge=0, le=9_999_999_999)
 
 
 class RoleCreate(BaseModel):
@@ -131,6 +138,7 @@ class InvitationOut(BaseModel):
 
 __all__ = [
     "CaptchaResponse",
+    "CapitalUpdate",
     "InvitationCreate",
     "InvitationOut",
     "LoginRequest",

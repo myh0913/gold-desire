@@ -16,6 +16,7 @@ from app.api.deps import (
     get_auth_service,
     get_current_user,
     get_repositories,
+    get_user_service,
 )
 from app.core.cache import get_cache
 from app.core.captcha import issue_captcha
@@ -29,6 +30,7 @@ from app.repositories import Repositories
 from app.repositories.auth import RoleRepository
 from app.schemas.auth import (
     CaptchaResponse,
+    CapitalUpdate,
     LoginRequest,
     MeResponse,
     RegisterRequest,
@@ -36,6 +38,7 @@ from app.schemas.auth import (
     UserOut,
 )
 from app.services.auth_service import AuthService
+from app.services.user_service import UserService
 
 router = APIRouter(tags=["auth"])
 
@@ -154,6 +157,17 @@ async def me(
     stored = await RoleRepository(repos.session).get_pages(user.role)
     pages = effective_pages(stored if stored else None, is_admin=(user.role == "admin"))
     return MeResponse(user=UserOut.model_validate(user), role=user.role, pages=pages)
+
+
+@router.patch("/auth/me", response_model=UserOut)
+async def update_me(
+    payload: CapitalUpdate,
+    user: User = Depends(get_current_user),
+    service: UserService = Depends(get_user_service),
+) -> UserOut:
+    """当前用户自助更新资料（本金；全量替换语义，``null`` 清除）。"""
+    updated = await service.update_capital(user.username, user.username, payload.capital_yuan)
+    return UserOut.model_validate(updated)
 
 
 __all__ = [

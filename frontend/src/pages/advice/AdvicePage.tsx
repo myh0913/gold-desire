@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,9 +17,11 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateViews';
 import { StaleNotice } from '@/components/common/StaleNotice';
+import { useAuth } from '@/hooks/useAuth';
 import { reportApi } from '@/lib/api';
 import { useCycleQuery } from '@/lib/queries/market';
-import { formatPercentPlain } from '@/lib/format';
+import { formatNumber, formatPct, formatPercentPlain } from '@/lib/format';
+import { strategyLabel } from '@/lib/strategies';
 import { getWsClient } from '@/lib/ws';
 import type {
   AdviceGate,
@@ -27,11 +29,14 @@ import type {
   DragonAdvicePayload,
   DragonPoolItemOut,
 } from '@/types/report';
+import type { ReviewStrategyStatsOut } from '@/types/review';
 
 /** 报告域查询键（WS 推送失效用）。 */
 export const ADVICE_KEYS = {
   list: ['report', 'advice'] as const,
   pool: ['report', 'dragon_pool'] as const,
+  /** 已买入标记（追加交易日为末位键）。 */
+  marks: ['report', 'advice', 'marks'] as const,
 };
 
 /** 订阅 WS `advice` / `pool` / `cycle` 频道：建议、建池候选或情绪状态变化即失效对应查询。 */
@@ -172,20 +177,67 @@ function PoolCandidateRow({ item }: { item: DragonPoolItemOut }) {
   );
 }
 
-function AdviceCard({ report }: { report: AdviceReportOut }) {
+function AdviceCard({
+  report,
+  bought,
+  stats,
+  capitalYuan,
+  onToggleBought,
+  togglePending,
+}: {
+  report: AdviceReportOut;
+  /** 该建议当日是否已标记买入。 */
+  bought: boolean;
+  /** 该策略近 30 日战绩（无数据显示不展示）。 */
+  stats: ReviewStrategyStatsOut | undefined;
+  /** 账户本金（元）；未设置时不给股数。 */
+  capitalYuan: number | null;
+  onToggleBought: (bought: boolean) => void;
+  togglePending: boolean;
+}) {
   const advice = asPayload(report.payload);
   const gates: AdviceGate[] = advice.gates ?? [];
+  // 参考股数：本金 × 建议仓位 ÷ 买点价，向下取整到 100 股（A 股一手）
+  const shares =
+    capitalYuan != null &&
+    advice.buy_price != null &&
+    advice.position != null &&
+    advice.buy_price > 0
+      ? Math.floor((capitalYuan * advice.position) / advice.buy_price / 100) * 100
+      : null;
   return (
     <Card data-testid="advice-card">
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" data-testid="strategy-badge">
+            {strategyLabel(report.strategy_id)}
+          </Badge>
           <Badge variant={pathBadgeVariant(advice.path_id)}>{advice.path_id}</Badge>
           <span className="text-base font-semibold">{advice.name ?? advice.code}</span>
           <span className="text-muted-foreground text-xs">{advice.code}</span>
           {advice.bonus_score != null && (
             <Badge variant="outline">加分 {advice.bonus_score}</Badge>
           )}
+          <Button
+            size="sm"
+            variant={bought ? 'secondary' : 'outline'}
+            className="ml-auto"
+            disabled={togglePending}
+            data-testid="bought-toggle"
+            onClick={() => onToggleBought(!bought)}
+          >
+            {bought ? '已买入 ✓' : '标记已买入'}
+          </Button>
         </div>
+
+        {stats && stats.total > 0 && (
+          <p className="text-muted-foreground rounded-md bg-muted/40 px-2 py-1 text-xs">
+            {strategyLabel(report.strategy_id)}近30日战绩：样本 {stats.total}
+            {stats.win_rate != null && `，胜率 ${formatPercentPlain(stats.win_rate * 100, 1)}`}
+            {stats.avg_return_pct != null && `，平均收益 ${formatPct(stats.avg_return_pct * 100)}`}
+            （详见复盘页）
+          </p>
+        )}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
           <div>
@@ -202,6 +254,12 @@ function AdviceCard({ report }: { report: AdviceReportOut }) {
             <dt className="text-muted-foreground text-xs">止损价</dt>
             <dd>{advice.stop_loss_price != null ? advice.stop_loss_price.toFixed(2) : '--'}</dd>
           </div>
+          {shares != null && shares > 0 && (
+            <div>
+              <dt className="text-muted-foreground text-xs">参考股数</dt>
+              <dd data-testid="shares-cell">{formatNumber(shares)} 股</dd>
+            </div>
+          )}
         </dl>
 
         {advice.sell_timing && (
@@ -248,6 +306,8 @@ function AdviceCard({ report }: { report: AdviceReportOut }) {
 export default function AdvicePage() {
   useStrategyStream();
   const [date, setDate] = useState<string>('');
+  const { me } = useAuth();
+  const client = useQueryClient();
 
   const datesQuery = useQuery({
     queryKey: ['report', 'advice', 'dates'],
@@ -258,6 +318,44 @@ export default function AdvicePage() {
     queryKey: [...ADVICE_KEYS.list, date],
     queryFn: ({ signal }) => reportApi.advice(date ? { date } : {}, signal),
   });
+
+  const tradeDate = adviceQuery.data?.trade_date ?? null;
+
+  // 已买入标记（键随交易日；POST 返回全量直接写缓存）
+  const marksQuery = useQuery({
+    queryKey: [...ADVICE_KEYS.marks, tradeDate],
+    queryFn: ({ signal }) => reportApi.adviceMarks(tradeDate as string, signal),
+    enabled: tradeDate != null,
+  });
+  const markMutation = useMutation({
+    mutationFn: (vars: { strategyId: string; code: string; bought: boolean }) =>
+      reportApi.markAdvice({
+        trade_date: tradeDate as string,
+        strategy_id: vars.strategyId,
+        code: vars.code,
+        bought: vars.bought,
+      }),
+    onSuccess: (data) => {
+      client.setQueryData([...ADVICE_KEYS.marks, data.trade_date], data);
+    },
+  });
+
+  // 各策略近 30 日战绩（与复盘页共用查询键，缓存互通）
+  const statsQuery = useQuery({
+    queryKey: ['report', 'review', 'strategy-stats', 30],
+    queryFn: ({ signal }) => reportApi.strategyStats(30, signal),
+  });
+  const statsByStrategy = useMemo(() => {
+    const map = new Map<string, ReviewStrategyStatsOut>();
+    for (const item of statsQuery.data?.items ?? []) map.set(item.strategy_id, item);
+    return map;
+  }, [statsQuery.data]);
+
+  const boughtKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of marksQuery.data?.items ?? []) set.add(`${row.strategy_id}:${row.code}`);
+    return set;
+  }, [marksQuery.data]);
 
   const dates = useMemo(() => datesQuery.data?.dates ?? [], [datesQuery.data]);
   const reports = useMemo(
@@ -325,9 +423,22 @@ export default function AdvicePage() {
         )}
         {reports.length > 0 && (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {reports.map((report) => (
-              <AdviceCard key={`${report.ran_at}-${String(report.payload.code ?? '')}`} report={report} />
-            ))}
+            {reports.map((report) => {
+              const code = String(report.payload.code ?? '');
+              return (
+                <AdviceCard
+                  key={`${report.ran_at}-${code}`}
+                  report={report}
+                  bought={boughtKeys.has(`${report.strategy_id}:${code}`)}
+                  stats={statsByStrategy.get(report.strategy_id)}
+                  capitalYuan={me?.user.capital_yuan ?? null}
+                  onToggleBought={(bought) =>
+                    markMutation.mutate({ strategyId: report.strategy_id, code, bought })
+                  }
+                  togglePending={markMutation.isPending}
+                />
+              );
+            })}
           </div>
         )}
       </section>

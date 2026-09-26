@@ -92,6 +92,21 @@ class UserService:
         await self.audit.record(actor=actor, action="user_password_reset", target=username)
         return user
 
+    async def update_capital(self, actor: str, username: str, capital_yuan: float | None) -> User:
+        """用户自助更新本金（仅限本人，全量替换语义，``None`` 清除）。"""
+        if actor != username:
+            raise PermissionDeniedError("只能修改自己的本金", code="self_only")
+        user = await self._target(username)
+        user.capital_yuan = capital_yuan
+        await self.repos.session.flush()
+        await self.audit.record(
+            actor=actor,
+            action="capital_updated",
+            target=username,
+            detail={"capital_yuan": capital_yuan},
+        )
+        return user
+
     async def delete_user(self, actor: str, username: str) -> None:
         """删除用户，保护自身与最后一个启用管理员。"""
         user = await self._target(username)

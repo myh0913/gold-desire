@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "AdviceLatestResponse",
+    "AdviceMarkOut",
+    "AdviceMarkRequest",
+    "AdviceMarksResponse",
     "AdviceReportOut",
     "AdviceResponse",
     "BacktestRunOut",
@@ -73,6 +76,34 @@ class AdviceLatestResponse(BaseModel):
 
     trade_date: date | None = None
     item: AdviceReportOut | None = None
+
+
+class AdviceMarkOut(BaseModel):
+    """建议「已买入」标记行。"""
+
+    model_config = _ORM
+
+    trade_date: date
+    strategy_id: str
+    code: str
+    marked_by: str | None = None
+    marked_at: datetime | None = None
+
+
+class AdviceMarksResponse(BaseModel):
+    """某交易日已买入标记列表。"""
+
+    trade_date: date
+    items: list[AdviceMarkOut] = Field(default_factory=list)
+
+
+class AdviceMarkRequest(BaseModel):
+    """标记/取消「已买入」（取消 = 删行）。"""
+
+    trade_date: date = Field(description="建议交易日")
+    strategy_id: str = Field(min_length=1, max_length=64, description="策略标识")
+    code: str = Field(min_length=1, max_length=16, description="股票代码")
+    bought: bool = Field(description="true=标记已买入；false=取消")
 
 
 class BacktestRunOut(BaseModel):

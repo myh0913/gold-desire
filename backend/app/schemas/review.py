@@ -19,6 +19,8 @@ __all__ = [
     "ReviewAdviceStatsOut",
     "ReviewPoolTopOut",
     "ReviewResponse",
+    "ReviewStrategyStatsOut",
+    "ReviewStrategyStatsResponse",
 ]
 
 
@@ -45,6 +47,8 @@ class ReviewAdviceOutcomeOut(BaseModel):
 
     code: str
     name: str | None = None
+    strategy_id: str | None = None
+    bought: bool = False
     path_id: str
     path_label: str | None = None
     buy_day: date | None = None
@@ -69,6 +73,27 @@ class ReviewAdviceStatsOut(BaseModel):
     win_count: int = 0
     win_rate: float | None = None
     avg_return_pct: float | None = None
+
+
+class ReviewStrategyStatsOut(BaseModel):
+    """单策略跨日战绩聚合（口径与 :class:`ReviewAdviceStatsOut` 一致）。"""
+
+    strategy_id: str
+    total: int = 0
+    settled: int = 0
+    pending: int = 0
+    win_count: int = 0
+    win_rate: float | None = None
+    avg_return_pct: float | None = None
+
+
+class ReviewStrategyStatsResponse(BaseModel):
+    """跨日分策略战绩聚合视图（``days=0`` 表示全部历史）。"""
+
+    days: int = 0
+    start_date: date | None = None
+    end_date: date | None = None
+    items: list[ReviewStrategyStatsOut] = []
 
 
 class ReviewResponse(BaseModel):

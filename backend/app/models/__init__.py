@@ -23,6 +23,7 @@ from app.models.config import (
     StrategyDef,
 )
 from app.models.derived import (
+    AdviceMark,
     AdviceReport,
     AgentMessage,
     AgentSession,
@@ -47,6 +48,7 @@ from app.models.market import (
 from app.models.raw import RawResponse
 
 __all__ = [
+    "AdviceMark",
     "AdviceReport",
     "AgentMessage",
     "AgentSession",

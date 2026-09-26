@@ -6,20 +6,24 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import require_admin, require_page
+from app.api.deps import client_ip, require_admin, require_page
+from app.core.logging import get_request_id
 from app.core.pages import PageKey
 from app.models.auth import User
 from app.repositories import Repositories, get_repositories
 from app.schemas.common import DatesResponse
 from app.schemas.report import (
     AdviceLatestResponse,
+    AdviceMarkOut,
+    AdviceMarkRequest,
+    AdviceMarksResponse,
     AdviceResponse,
     BacktestRunOut,
     BacktestRunRequest,
     BacktestRunsResponse,
     DragonPoolResponse,
 )
-from app.schemas.review import ReviewResponse
+from app.schemas.review import ReviewResponse, ReviewStrategyStatsResponse
 from app.services.report_service import ReportService
 from app.services.review_service import ReviewService
 
@@ -72,6 +76,48 @@ async def get_advice_dates(
     return await service.advice_dates(limit)
 
 
+@router.get("/advice/marks", response_model=AdviceMarksResponse)
+async def list_advice_marks(
+    date_: date = Query(alias="date"),
+    _: User = Depends(require_page(PageKey.ADVICE)),
+    repos: Repositories = Depends(get_repositories),
+) -> AdviceMarksResponse:
+    """某交易日「已买入」标记列表。"""
+    rows = await repos.advice_marks.get_by_date(date_)
+    return AdviceMarksResponse(
+        trade_date=date_, items=[AdviceMarkOut.model_validate(row) for row in rows]
+    )
+
+
+@router.post("/advice/marks", response_model=AdviceMarksResponse)
+async def mark_advice_bought(
+    payload: AdviceMarkRequest,
+    request: Request,
+    actor: User = Depends(require_page(PageKey.ADVICE)),
+    repos: Repositories = Depends(get_repositories),
+) -> AdviceMarksResponse:
+    """标记/取消「已买入」（取消 = 删行；写操作全量审计）。"""
+    await repos.advice_marks.set_bought(
+        payload.trade_date,
+        payload.strategy_id,
+        payload.code,
+        payload.bought,
+        marked_by=actor.username,
+    )
+    await repos.audit_logs.record(
+        actor=actor.username,
+        action="advice_mark",
+        target=f"{payload.trade_date}:{payload.strategy_id}:{payload.code}",
+        detail={"bought": payload.bought},
+        ip=client_ip(request),
+        request_id=get_request_id(),
+    )
+    rows = await repos.advice_marks.get_by_date(payload.trade_date)
+    return AdviceMarksResponse(
+        trade_date=payload.trade_date, items=[AdviceMarkOut.model_validate(row) for row in rows]
+    )
+
+
 @router.get("/dragon/pool", response_model=DragonPoolResponse)
 async def get_dragon_pool(
     date_: date | None = Query(default=None, alias="date"),
@@ -110,6 +156,18 @@ async def get_review_dates(
 ) -> DatesResponse:
     """可复盘交易日列表（去重倒序）。"""
     return await service.review_dates(limit)
+
+
+@router.get("/review/strategy-stats", response_model=ReviewStrategyStatsResponse)
+async def get_review_strategy_stats(
+    days: int | None = Query(
+        default=30, ge=0, le=730, description="自然日窗口，锚定最近有建议的交易日；0 表示全部"
+    ),
+    _: User = Depends(require_page(PageKey.REVIEW)),
+    service: ReviewService = Depends(get_review_service),
+) -> ReviewStrategyStatsResponse:
+    """跨日分策略战绩聚合（样本 / 胜率 / 平均收益）。"""
+    return await service.strategy_stats(days)
 
 
 @router.get("/backtest/runs", response_model=BacktestRunsResponse)

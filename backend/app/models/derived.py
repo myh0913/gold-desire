@@ -95,6 +95,33 @@ class AdviceReport(Base):
     )
 
 
+class AdviceMark(Base):
+    """建议「已买入」人工标记（建议页点选留痕，复盘页串联展示）。
+
+    以 ``(trade_date, strategy_id, code)`` 唯一；取消买入 = 删行，
+    表内恒为「已买入」集合，不做布尔翻转。
+    """
+
+    __tablename__ = "advice_marks"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date", "strategy_id", "code", name="uq_advice_marks_date_strategy_code"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True, nullable=False, doc="建议交易日")
+    strategy_id: Mapped[str] = mapped_column(String(64), nullable=False, doc="策略标识")
+    code: Mapped[str] = mapped_column(String(16), nullable=False, doc="股票代码")
+    marked_by: Mapped[str | None] = mapped_column(String(64), nullable=True, doc="标记人用户名")
+    marked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, doc="标记时间"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class BacktestRun(Base):
     """回测任务及其产物（同区间同参数重跑结果幂等）。"""
 

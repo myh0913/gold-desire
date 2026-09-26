@@ -18,7 +18,13 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/common/StateV
 import { useChannelRefresh } from '@/hooks/useChannelRefresh';
 import { reportApi } from '@/lib/api';
 import { formatAmount, formatNumber, formatPct, formatPercentPlain, priceToneClass } from '@/lib/format';
-import type { ReviewAdviceOutcomeOut, ReviewPoolTopOut, ReviewResponse } from '@/types/review';
+import { strategyLabel } from '@/lib/strategies';
+import type {
+  ReviewAdviceOutcomeOut,
+  ReviewPoolTopOut,
+  ReviewResponse,
+  ReviewStrategyStatsOut,
+} from '@/types/review';
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '待评估',
@@ -120,10 +126,21 @@ const adviceColumns: DataTableColumn<ReviewAdviceOutcomeOut>[] = [
     key: 'code',
     header: '标的',
     render: (row) => (
-      <span>
+      <span className="flex items-center gap-1.5">
         {row.name ?? ''} <span className="text-muted-foreground text-xs">{row.code}</span>
+        {row.bought && (
+          <Badge variant="up" className="text-[10px]" data-testid="bought-badge">
+            已买入
+          </Badge>
+        )}
       </span>
     ),
+  },
+  {
+    key: 'strategy',
+    header: '策略',
+    render: (row) =>
+      row.strategy_id ? <Badge variant="outline">{strategyLabel(row.strategy_id)}</Badge> : '--',
   },
   {
     key: 'path',
@@ -186,6 +203,88 @@ const adviceColumns: DataTableColumn<ReviewAdviceOutcomeOut>[] = [
   },
 ];
 
+/** 跨日分策略战绩卡：锚定最近有建议的交易日，自然日窗口聚合。 */
+function StrategyStatsCard() {
+  const [days, setDays] = useState(30);
+  const statsQuery = useQuery({
+    queryKey: ['report', 'review', 'strategy-stats', days],
+    queryFn: ({ signal }) => reportApi.strategyStats(days, signal),
+  });
+  const columns: DataTableColumn<ReviewStrategyStatsOut>[] = [
+    {
+      key: 'strategy',
+      header: '策略',
+      render: (row) => strategyLabel(row.strategy_id),
+    },
+    { key: 'total', header: '样本', align: 'right', render: (row) => String(row.total) },
+    { key: 'settled', header: '了结', align: 'right', render: (row) => String(row.settled) },
+    { key: 'pending', header: '待定', align: 'right', render: (row) => String(row.pending) },
+    {
+      key: 'win_rate',
+      header: '胜率',
+      align: 'right',
+      render: (row) =>
+        row.win_rate != null ? formatPercentPlain(row.win_rate * 100, 1) : '--',
+    },
+    {
+      key: 'avg_return',
+      header: '平均收益',
+      align: 'right',
+      render: (row) => (
+        <span className={`tabular-nums ${priceToneClass(row.avg_return_pct)}`}>
+          {row.avg_return_pct != null ? formatPct(row.avg_return_pct * 100) : '--'}
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <Card data-testid="strategy-stats-card">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">策略战绩</CardTitle>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="strategy-stats-days" className="text-muted-foreground text-xs">
+              统计窗口
+            </Label>
+            <Select
+              id="strategy-stats-days"
+              value={String(days)}
+              onChange={(event) => setDays(Number(event.target.value))}
+              className="w-28"
+            >
+              <option value="30">近 30 日</option>
+              <option value="90">近 90 日</option>
+              <option value="0">全部历史</option>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {statsQuery.isLoading && <LoadingState className="min-h-24" />}
+        {statsQuery.isError && (
+          <ErrorState error={statsQuery.error} onRetry={() => void statsQuery.refetch()} />
+        )}
+        {statsQuery.isSuccess && (
+          <DataTable
+            columns={columns}
+            rows={statsQuery.data.items}
+            rowKey={(row) => row.strategy_id}
+            emptyTitle="窗口内暂无建议记录"
+            emptyDescription="有建议推送并跨日回溯后，这里按策略聚合样本、胜率与平均收益。"
+          />
+        )}
+        {statsQuery.data?.end_date && (
+          <p className="text-muted-foreground text-xs">
+            统计区间 {statsQuery.data.start_date ?? '全部历史'} ~ {statsQuery.data.end_date}
+            （同股同路次重复推送按最新一次计）
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ReviewPage() {
   useChannelRefresh(['advice'], ['report', 'review']);
   const [date, setDate] = useState('');
@@ -247,6 +346,8 @@ export default function ReviewPage() {
             <SentimentPanel review={review} />
           </Card>
 
+          <StrategyStatsCard />
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">池型与天梯</CardTitle>
@@ -295,7 +396,9 @@ export default function ReviewPage() {
               <DataTable
                 columns={adviceColumns}
                 rows={review.advices}
-                rowKey={(row) => `${row.path_id}-${row.code}-${row.buy_day ?? 'none'}`}
+                rowKey={(row) =>
+                  `${row.strategy_id ?? ''}-${row.path_id}-${row.code}-${row.buy_day ?? 'none'}`
+                }
                 emptyTitle="该日无建议记录"
                 emptyDescription="策略产出建议后（盘后自动判定），这里逐条回溯收益与离场方式。"
               />

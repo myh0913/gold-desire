@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     false,
@@ -46,6 +47,9 @@ class User(TimestampMixin, Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, doc="最近登录时间"
+    )
+    capital_yuan: Mapped[float | None] = mapped_column(
+        Numeric(14, 2), nullable=True, doc="账户本金（元），用户自助维护，用于建议仓位折算股数"
     )
 
 

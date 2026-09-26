@@ -31,6 +31,7 @@ from app.repositories.config import (
     StrategyDefRepository,
 )
 from app.repositories.derived import (
+    AdviceMarkRepository,
     AdviceReportRepository,
     BacktestRunRepository,
     CapabilityHealth,
@@ -53,6 +54,7 @@ from app.repositories.market import (
 from app.repositories.raw import RawResponseRepository
 
 __all__ = [
+    "AdviceMarkRepository",
     "AdviceReportRepository",
     "AgentMessageRepository",
     "AgentSessionRepository",
@@ -114,6 +116,7 @@ class Repositories:
     datasource_registry: DatasourceRegistryRepository
     datasource_health: DatasourceHealthRepository
     advice_reports: AdviceReportRepository
+    advice_marks: AdviceMarkRepository
     backtest_runs: BacktestRunRepository
     ingest_jobs: IngestJobRepository
     audit_logs: AuditLogRepository
@@ -146,6 +149,7 @@ class Repositories:
             datasource_registry=DatasourceRegistryRepository(session),
             datasource_health=DatasourceHealthRepository(session),
             advice_reports=AdviceReportRepository(session),
+            advice_marks=AdviceMarkRepository(session),
             backtest_runs=BacktestRunRepository(session),
             ingest_jobs=IngestJobRepository(session),
             audit_logs=AuditLogRepository(session),

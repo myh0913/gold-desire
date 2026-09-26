@@ -15,7 +15,13 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from app.models.derived import AdviceReport, BacktestRun, DragonPoolCandidate, IngestJob
+from app.models.derived import (
+    AdviceMark,
+    AdviceReport,
+    BacktestRun,
+    DragonPoolCandidate,
+    IngestJob,
+)
 from app.repositories.base import BaseRepository
 
 _TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
@@ -150,6 +156,46 @@ class AdviceReportRepository(BaseRepository):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+
+class AdviceMarkRepository(BaseRepository):
+    """建议「已买入」标记仓储（表内恒为已买入集合）。"""
+
+    async def get_by_date(self, trade_date: date) -> list[AdviceMark]:
+        """取某日全部已买入标记，按标记时间倒序。"""
+        stmt = (
+            select(AdviceMark)
+            .where(AdviceMark.trade_date == trade_date)
+            .order_by(AdviceMark.marked_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def set_bought(
+        self, trade_date: date, strategy_id: str, code: str, bought: bool,
+        marked_by: str | None = None,
+    ) -> AdviceMark | None:
+        """标记/取消买入：标记为 upsert，取消为删行；返回当前行（取消后 ``None``）。"""
+        stmt = select(AdviceMark).where(
+            AdviceMark.trade_date == trade_date,
+            AdviceMark.strategy_id == strategy_id,
+            AdviceMark.code == code,
+        )
+        row = await self.session.scalar(stmt)
+        if not bought:
+            if row is not None:
+                await self.session.delete(row)
+                await self.session.flush()
+            return None
+        if row is None:
+            row = AdviceMark(
+                trade_date=trade_date, strategy_id=strategy_id, code=code, marked_by=marked_by
+            )
+            self.session.add(row)
+        else:
+            row.marked_by = marked_by
+        await self.session.flush()
+        return row
 
 
 class BacktestRunRepository(BaseRepository):

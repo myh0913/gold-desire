@@ -116,3 +116,28 @@ export interface DragonAdvicePayload {
   sell_price_ref?: 'open' | 'close';
   field_snapshot: Record<string, unknown>;
 }
+
+// --------------------------------------------------------------- 已买入标记
+
+/** 已买入标记行（`advice_marks`）。 */
+export interface AdviceMarkOut {
+  trade_date: string;
+  strategy_id: string;
+  code: string;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
+/** 某交易日已买入标记列表（POST 返回全量，便于直接更新缓存）。 */
+export interface AdviceMarksResponse {
+  trade_date: string;
+  items: AdviceMarkOut[];
+}
+
+/** 设置/取消已买入请求（取消即删行）。 */
+export interface AdviceMarkRequest {
+  trade_date: string;
+  strategy_id: string;
+  code: string;
+  bought: boolean;
+}

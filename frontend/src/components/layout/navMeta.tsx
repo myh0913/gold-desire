@@ -70,3 +70,41 @@ export function buildNav(pages: readonly string[]): NavEntry[] {
     };
   });
 }
+
+/** 导航分组元数据：组顺序即展示顺序；key 不在其中的页面进「其他」兜底组。 */
+const NAV_GROUPS: { label: string; keys: readonly string[] }[] = [
+  { label: '行情感知', keys: ['overview', 'pools', 'ladder', 'themes', 'newsflash', 'monitor'] },
+  { label: '决策', keys: ['advice', 'review', 'backtest'] },
+  { label: '系统', keys: ['quantconfig', 'settings'] },
+];
+
+/** 渲染用导航分组（仅保留有页面的组；兜底组保证未登记 key 不被静默丢弃）。 */
+export interface NavGroup {
+  key: string;
+  label: string;
+  entries: NavEntry[];
+}
+
+/** 由后端页面 key 列表构造分组导航项。 */
+export function buildNavGroups(pages: readonly string[]): NavGroup[] {
+  const entries = buildNav(pages);
+  const byKey = new Map(entries.map((entry) => [entry.key, entry]));
+  const grouped = new Set<string>();
+  const groups: NavGroup[] = [];
+  for (const group of NAV_GROUPS) {
+    const items = group.keys
+      .filter((key) => byKey.has(key))
+      .map((key) => {
+        grouped.add(key);
+        return byKey.get(key) as NavEntry;
+      });
+    if (items.length > 0) {
+      groups.push({ key: group.keys.join('-'), label: group.label, entries: items });
+    }
+  }
+  const fallback = entries.filter((entry) => !grouped.has(entry.key));
+  if (fallback.length > 0) {
+    groups.push({ key: 'other', label: '其他', entries: fallback });
+  }
+  return groups;
+}

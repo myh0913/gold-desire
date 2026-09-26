@@ -23,6 +23,10 @@ export type AdviceOutcomeStatus = 'pending' | 'stopped' | 'closed';
 export interface ReviewAdviceOutcomeOut {
   code: string;
   name: string | null;
+  /** 产出该建议的策略 id（跨日分策略聚合的分组键）。 */
+  strategy_id: string | null;
+  /** 该建议当日是否已被标记「已买入」（建议页标记串联）。 */
+  bought: boolean;
   path_id: string;
   path_label: string | null;
   buy_day: string | null;
@@ -46,6 +50,25 @@ export interface ReviewAdviceStatsOut {
   win_count: number;
   win_rate: number | null;
   avg_return_pct: number | null;
+}
+
+/** 单策略跨日战绩聚合（口径与 :interface:`ReviewAdviceStatsOut` 一致）。 */
+export interface ReviewStrategyStatsOut {
+  strategy_id: string;
+  total: number;
+  settled: number;
+  pending: number;
+  win_count: number;
+  win_rate: number | null;
+  avg_return_pct: number | null;
+}
+
+/** 跨日分策略战绩聚合视图（`days=0` 表示全部历史）。 */
+export interface ReviewStrategyStatsResponse {
+  days: number;
+  start_date: string | null;
+  end_date: string | null;
+  items: ReviewStrategyStatsOut[];
 }
 
 /** 某交易日复盘聚合视图。 */

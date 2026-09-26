@@ -26,7 +26,9 @@ from app.services.review_service import ReviewService
 router = APIRouter(tags=["reports"])
 
 
-def get_report_service(request: Request, repos: Repositories = Depends(get_repositories)) -> ReportService:
+def get_report_service(
+    request: Request, repos: Repositories = Depends(get_repositories)
+) -> ReportService:
     """请求级报告服务（携带应用级会话工厂，供后台回测任务复用同一库）。"""
     return ReportService(
         repos, session_factory=getattr(request.app.state, "session_factory", None)

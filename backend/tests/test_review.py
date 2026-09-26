@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.repositories import Repositories
 from app.services.review_service import ReviewService
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from tests.conftest import STOCK_CODE, TRADE_DATE, seed_market
 
 
@@ -76,7 +76,26 @@ async def seeded(
                 "stop_loss_price": 14.16,
             },
         }
-        await repos.advice_reports.upsert_many([closed, duplicate, stopped, pending])
+        # auction：J1 声明 sell_price_ref="open" → 可卖日 01-09 open=11.9 了结
+        auction = {
+            **base,
+            "ran_at": datetime(2026, 6, 3, 15, 2, tzinfo=UTC),
+            "payload": {
+                "path_id": "auction",
+                "path_label": "竞价抢筹",
+                "code": STOCK_CODE,
+                "name": "测试一号",
+                "buy_day": "2026-01-08",
+                "buy_price": 11.6,
+                "position": 0.15,
+                "stop_loss_price": None,
+                "sell_timing": "T+1 开盘卖出（持 1 日，主口径）",
+                "sell_price_ref": "open",
+            },
+        }
+        await repos.advice_reports.upsert_many(
+            [closed, duplicate, stopped, pending, auction]
+        )
         await session.commit()
     yield session_factory
 
@@ -107,10 +126,17 @@ async def test_advice_outcomes_and_dedupe(seeded) -> None:
 
     pending = by_key[("S2", "2026-06-05")]
     assert pending.status == "pending"
+
+    # sell_price_ref="open"（J1）：按可卖日开盘价了结（01-09 open=11.9）
+    auction = by_key[("auction", "2026-01-08")]
+    assert auction.status == "closed"
+    assert auction.sell_price == pytest.approx(11.9)
+    assert auction.return_pct == pytest.approx(11.9 / 11.6 - 1)
     # 行级 ran_at（P0-4）：取报告行的运行时间，而非 payload 内的键（历史行恒空）
     assert closed.ran_at is not None and closed.ran_at.startswith("2026-06-03T15:05:00")
     # 去重：同键（code+path+买点日）的旧一次运行不重复出现
-    assert len([a for a in review.advices if a.path_id == "S2" and a.buy_day == date(2026, 1, 8)]) == 1
+    s2_jan8 = [a for a in review.advices if a.path_id == "S2" and a.buy_day == date(2026, 1, 8)]
+    assert len(s2_jan8) == 1
 
 
 async def test_stats_sentiment_pools(seeded) -> None:
@@ -118,12 +144,15 @@ async def test_stats_sentiment_pools(seeded) -> None:
     review = await _review(seeded)
 
     stats = review.advice_stats
-    assert stats.total == 3  # closed + stopped + pending（seed 那条与 closed 同 ran_at 被 upsert 覆盖）
-    assert stats.settled == 2
+    # closed + stopped + pending + auction（seed 那条与 closed 同 ran_at 被 upsert 覆盖）
+    assert stats.total == 4
+    assert stats.settled == 3
     assert stats.pending == 1
-    assert stats.win_count == 2  # closed +3.45% / stopped +1.72% 均为正
+    assert stats.win_count == 3  # closed / stopped / auction 收益均为正
     assert stats.win_rate == pytest.approx(1.0)
-    assert stats.avg_return_pct == pytest.approx((12.0 / 11.6 - 1 + 11.8 / 11.6 - 1) / 2)
+    assert stats.avg_return_pct == pytest.approx(
+        (12.0 / 11.6 - 1 + 11.8 / 11.6 - 1 + 11.9 / 11.6 - 1) / 3
+    )
 
     assert review.sentiment is not None
     assert review.sentiment.temperature == pytest.approx(62.5)

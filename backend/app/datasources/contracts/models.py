@@ -250,6 +250,30 @@ class OpeningMatchContract(ContractModel):
     )
 
 
+class AuctionSeriesContract(ContractModel):
+    """个股集合竞价时序点契约（09:15~09:25 竞价阶段的逐点快照）。
+
+    口径对齐 eltdx auctions（``time_label`` **带秒**，如 ``"09:20:03"``），
+    与分时的零填充 ``"HH:MM"`` 不同。竞价撮合量单位**手**；撮合额为估算值
+    （价格 × 手 × 100），源无法给出真实分笔金额，缺失为 ``None``。
+    消费方（J1 竞价抢筹）取**第一个 ``time_label`` 以 ``"09:20"`` 开头**的点
+    作为 9:20 参考价。
+    """
+
+    code: str = Field(description="证券代码，标准形如 600519.SH")
+    trade_date: date = Field(description="交易日（Asia/Shanghai）")
+    time_label: str = Field(description="竞价时点标签，带秒（如 09:20:03）")
+    price: float = Field(gt=0, description="该时点虚拟撮合价，单位：元")
+    matched_volume_lots: int | None = Field(
+        default=None, ge=0, description="该时点虚拟撮合量，单位：手；源缺失为 None"
+    )
+    matched_amount_yuan: float | None = Field(
+        default=None,
+        ge=0,
+        description="该时点虚拟撮合额（估算=价×手×100），单位：元；源缺失为 None",
+    )
+
+
 class MonitorStockContract(ContractModel):
     """监管名单单条契约（某交易日的重点监控 / 异常波动记录）。
 

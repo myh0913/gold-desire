@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import date, datetime, UTC
+from datetime import UTC, date, datetime
 from typing import Any, ClassVar
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.core.config import get_settings
 from app.datasources.base import BaseProvider, SourceKind
 from app.ingest.scheduler import IngestScheduler
 from app.ingest.strategy_hooks import run_strategy_phases, strategy_state_name
 from app.repositories import Repositories
 from app.strategies.protocol import Phase
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from tests.conftest import TRADE_DATE, seed_market
 
 
@@ -70,7 +70,9 @@ async def test_runs_both_phases_and_is_idempotent(seeded) -> None:
             for phase in (Phase.POOL, Phase.INTRADAY)
         }
         again = await run_strategy_phases(repos, get_settings(), TRADE_DATE)
-    assert all(row is not None and row.payload["status"] == "succeeded" for row in statuses.values())
+    assert all(
+        row is not None and row.payload["status"] == "succeeded" for row in statuses.values()
+    )
     assert again == []
 
 

@@ -336,29 +336,38 @@ async def _record_failure(
         )
 
 
-async def _cycle_state_for(repos: StrategyRepos | None, trade_date: date) -> CycleState:
-    """取用于门控的当日周期状态。
+async def _cycle_gate_context(
+    repos: StrategyRepos | None, trade_date: date
+) -> tuple[CycleState, bool]:
+    """取用于门控的当日周期态 + 长熊开关（T-0008）。
 
     优先当日 ``cycle_judgements``；当日未生成（如 09:25 开盘判定早于盘后 judge）
     回退**最近一条**（=上一交易日盘后定版状态，正是「用昨日定版门控今早开盘」）；
     都没有 → :attr:`CycleState.UNKNOWN`（evaluate_gate 回退放行，绝不静默禁用）。
+    开关从同一条判定的 ``indicators`` payload 读 ``bear_switch``。
     """
     cycle_repos = getattr(repos, "cycle_judgements", None) if repos is not None else None
     if cycle_repos is None:
-        return CycleState.UNKNOWN
+        return CycleState.UNKNOWN, False
     row = await cycle_repos.get(trade_date)
     if row is None:
         row = await cycle_repos.latest()
     if row is None:
-        return CycleState.UNKNOWN
+        return CycleState.UNKNOWN, False
     state = str(getattr(row, "state", "") or "")
-    return CycleState(state) if state in CycleState._value2member_map_ else CycleState.UNKNOWN
+    gate_state = CycleState(state) if state in CycleState._value2member_map_ else CycleState.UNKNOWN
+    indicators = getattr(row, "indicators", None)
+    bear_switch = isinstance(indicators, dict) and indicators.get("bear_switch") is True
+    return gate_state, bear_switch
 
 
 #: 参与周期门控的阶段：产出**买卖建议**的钩子才拦；POOL/SCENE 是观察类，永远放行。
 _GATED_PHASES: frozenset[Phase] = frozenset(
     {Phase.AUCTION, Phase.OPENING, Phase.INTRADAY, Phase.TAILPAN}
 )
+
+#: 长熊开关只禁「追高腿」——修复/加速态下的买入；分歧/冰点/退潮本就另有门控。
+_BEAR_GATED_STATES: frozenset[CycleState] = frozenset({CycleState.REPAIR, CycleState.ACCEL})
 
 
 async def run_phase(
@@ -381,13 +390,27 @@ async def run_phase(
         ``gate_matrix`` 评估当日周期态，**冰点/退潮等禁买态直接拦下**——不执行钩子、
         不落建议、WS 无推送（用户侧「情绪不好时满足条件也不推」）；门控决定记在
         :attr:`StrategyRunResult.gate`，复盘页据此解释「为什么不推」。
+
+        长熊开关（T-0008）：开关开启且当日为修复/加速态时，声明 ``bear_gate`` 的
+        追高腿策略额外拦下（熊市修复/加速多为反抽，追高胜率差）；未声明的策略
+        不受影响。
     """
     results: list[StrategyRunResult] = []
-    gate_state = await _cycle_state_for(repos, ctx_factory.trade_date)
+    gate_state, bear_switch = await _cycle_gate_context(repos, ctx_factory.trade_date)
     for cls in await strategies_with_phase(phase, repos):
         gate: GateDecision | None = None
         if phase in _GATED_PHASES:
             gate = evaluate_gate(cls, gate_state)
+            if gate.allowed and bear_switch and gate_state in _BEAR_GATED_STATES and cls.bear_gate:
+                gate = GateDecision(
+                    allowed=False,
+                    position_factor=0.0,
+                    reason=(
+                        f"长熊开关开启：{gate_state.value} 态追高腿禁用"
+                        f"（{cls.strategy_id} 声明 bear_gate）"
+                    ),
+                    state=gate_state,
+                )
             if not gate.allowed:
                 logger.warning(
                     "strategy_gate_blocked",

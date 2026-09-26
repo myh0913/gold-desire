@@ -414,6 +414,36 @@ async def test_params_resolution_order_and_invalid_fallback(
     assert warnings[0].fallback == 0.5  # type: ignore[attr-defined]
 
 
+async def test_param_version_propagates_to_context(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """版本号提取（version_no）与上下文注入（param_version）：default→None，v{N}→N。"""
+    register_strategy(NsAlphaStrategy)
+
+    # 代码默认 → version "default"，version_no None
+    default_resolved = await resolve_params(NsAlphaStrategy)
+    assert default_resolved.version == "default"
+    assert default_resolved.version_no is None
+
+    draft = await repos.strategy_configs.create_draft("test_ns_alpha", {"threshold": 0.2})
+    await repos.strategy_configs.activate("test_ns_alpha", int(draft.version))
+    await session.commit()
+
+    # active → v{N}，version_no N；override 不改变版本号
+    active = await resolve_params(NsAlphaStrategy, repos)
+    assert active.version == f"v{int(draft.version)}"
+    assert active.version_no == int(draft.version)
+
+    with override_params("test_ns_alpha", {"threshold": 0.3}):
+        overridden = await resolve_params(NsAlphaStrategy, repos)
+        assert overridden.version_no == int(draft.version)
+
+    # 端到端：工厂构造的 ctx 携带 param_version（供各策略 _to_reports 落库）
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    ctx = await factory.create("test_ns_alpha")
+    assert ctx.param_version == int(draft.version)
+
+
 async def test_override_isolation_across_concurrent_tasks() -> None:
     """并发任务各自的覆盖互不可见（ContextVar 隔离，回归旧全局 dict 缺陷）。"""
     register_strategy(NsAlphaStrategy)
@@ -572,14 +602,41 @@ class GatePoolStrategy(BaseStrategy):
         return {"strategy": self.strategy_id}
 
 
-async def _seed_cycle_state(repos: Repositories, state: CycleState) -> None:
-    """写当日周期判定（模拟盘后 CycleService 产出）。"""
+class BearGatedStrategy(BaseStrategy):
+    """长熊开关接线测试（T-0008）：声明 ``bear_gate`` 的追高腿策略。
+
+    修复/加速/分歧三态矩阵全放行——被拦只能来自长熊开关本身。
+    """
+
+    strategy_id = "test_bear_gate"
+    label = "长熊开关"
+    version = "1.0.0"
+    description = "长熊开关接线测试"
+    phases = frozenset({Phase.INTRADAY})
+    gate_matrix: ClassVar[Mapping[CycleState, GateRule]] = {
+        CycleState.REPAIR: GateRule(True, 1.0),
+        CycleState.ACCEL: GateRule(True, 1.0),
+        CycleState.DIVERGE: GateRule(True, 1.0),
+    }
+    bear_gate: ClassVar[bool] = True
+
+    async def confirm_intraday(self, ctx: object) -> dict[str, Any]:
+        return {"advices": [{"code": "600002.SH"}]}
+
+
+async def _seed_cycle_state(
+    repos: Repositories, state: CycleState, *, bear_switch: bool = False
+) -> None:
+    """写当日周期判定（模拟盘后 CycleService 产出）。
+
+    ``bear_switch`` 写进 indicators payload（T-0008 起由 build_indicators 落库）。
+    """
     await repos.cycle_judgements.upsert_one(
         {
             "trade_date": TRADE_DATE,
             "state": state.value,
             "reasons": ["test"],
-            "indicators": {},
+            "indicators": {"bear_switch": True} if bear_switch else {},
             "overheated": False,
             "relaxed_needs_confirm": False,
             "data_degraded": False,
@@ -655,3 +712,57 @@ async def test_run_phase_pool_phase_not_gated_in_retreat(
     assert result.ok
     assert result.gate is None
     assert result.output == {"strategy": "test_gate_pool"}
+
+
+# ============================================================ 10. 长熊开关接线（T-0008）
+
+
+@pytest.mark.parametrize("state", [CycleState.REPAIR, CycleState.ACCEL])
+async def test_run_phase_bear_gate_blocks_repair_accel(
+    repos: Repositories, session: AsyncSession, state: CycleState
+) -> None:
+    """开关开启 + 修复/加速态 + 策略声明 bear_gate → 拦（追高腿禁买）。"""
+    register_strategy(BearGatedStrategy)
+    await _seed_cycle_state(repos, state, bear_switch=True)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and not result.gate.allowed
+    assert result.output["gated"] is True
+    assert "长熊开关" in result.output["gate_reason"]
+    assert result.output["advices"] == []
+
+
+async def test_run_phase_bear_gate_ignores_strategies_without_flag(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """开关开启但策略未声明 bear_gate（默认 False）→ 照常放行。"""
+    register_strategy(GatedIntradayStrategy)
+    await _seed_cycle_state(repos, CycleState.REPAIR, bear_switch=True)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and result.gate.allowed
+    assert result.output == {"advices": [{"code": "600001.SH"}]}
+
+
+async def test_run_phase_bear_gate_allows_diverge(
+    repos: Repositories, session: AsyncSession
+) -> None:
+    """开关开启 + 分歧态 → 不拦（开关只禁修复/加速态的追高腿）。"""
+    register_strategy(BearGatedStrategy)
+    await _seed_cycle_state(repos, CycleState.DIVERGE, bear_switch=True)
+
+    factory = StrategyContextFactory(repos=repos, settings=get_settings(), trade_date=TRADE_DATE)
+    summary = await run_phase(Phase.INTRADAY, factory, repos)
+
+    result = summary.results[0]
+    assert result.ok
+    assert result.gate is not None and result.gate.allowed
+    assert result.output == {"advices": [{"code": "600002.SH"}]}

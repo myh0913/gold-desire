@@ -214,12 +214,23 @@ class AdviceReportRepo(Protocol):
 
 @runtime_checkable
 class StrategyRepos(Protocol):
-    """策略解析/同步/执行所需的最小仓储视图（``Repositories`` 结构兼容）。"""
+    """策略解析/同步/执行所需的最小仓储视图（``Repositories`` 结构兼容）。
+
+    仓储成员声明为只读 ``property``：协议的普通实例属性按不变性（invariance）
+    检查，具体仓储类的属性类型永远无法与协议子类型精确相等；只读 property
+    仅按 getter 协变检查，``Repositories`` 等具体容器才能结构化匹配。
+    """
 
     session: Any
-    strategy_defs: StrategyDefRepo
-    strategy_configs: StrategyConfigRepo
-    advice_reports: AdviceReportRepo
+
+    @property
+    def strategy_defs(self) -> StrategyDefRepo: ...
+
+    @property
+    def strategy_configs(self) -> StrategyConfigRepo: ...
+
+    @property
+    def advice_reports(self) -> AdviceReportRepo: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +250,18 @@ class ResolvedStrategyParams:
     version: str
     source: str
     warnings: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def version_no(self) -> int | None:
+        """参数版本号（int）：``"v3"`` / ``"v3+override"`` → ``3``；代码默认 → ``None``。
+
+        供落库到 ``advice_reports.strategy_version``，将建议行与生效的参数版本关联。
+        """
+        if self.version.startswith("v"):
+            head = self.version[1:].split("+", 1)[0]
+            if head.isdigit():
+                return int(head)
+        return None
 
 
 def _coerce(spec: FactorParamSpec, value: Any) -> tuple[Any, str | None]:
@@ -376,6 +399,8 @@ class BaseStrategy(ABC):  # noqa: B024 - 生命周期钩子均为可选（默认
     params_schema: ClassVar[tuple[StrategyParamSpec, ...]] = ()
     #: 门控矩阵：周期态 → :class:`GateRule`，**由策略自身声明**（核心不再硬编码）。
     gate_matrix: ClassVar[Mapping[CycleState, GateRule]] = {}
+    #: 长熊开关门控（T-0008）：True = 追高腿策略——长熊开关开启时修复/加速态禁买。
+    bear_gate: ClassVar[bool] = False
 
     # ------------------------------------------------------------ 生命周期钩子
 

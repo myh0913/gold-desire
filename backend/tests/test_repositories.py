@@ -37,7 +37,6 @@ from app.repositories import (
     StrategyConfigRepository,
     get_repositories,
 )
-from app.repositories.base import BaseRepository
 from app.repositories.retention import run_retention
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

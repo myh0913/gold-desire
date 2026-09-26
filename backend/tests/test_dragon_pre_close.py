@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 import pytest
-from app.engine.dragon_samples import _BarView, _day_metrics, _is_limit_up, _with_pre_close
+from app.engine.dragon_bars import _BarView, _day_metrics, _is_limit_up, _with_pre_close
 
 DAY0 = date(2026, 9, 14)
 
@@ -62,7 +62,7 @@ def test_with_pre_close_backfills_from_previous_close() -> None:
 
 def test_existing_pre_close_wins() -> None:
     """行上已有昨收时优先用它，不用序列前值。"""
-    bars = [bar for bar in _seq([10.0, 11.0])]
+    bars = list(_seq([10.0, 11.0]))
     bars[1] = _FakeBar(
         trade_date=bars[1].trade_date,
         open=11.0,

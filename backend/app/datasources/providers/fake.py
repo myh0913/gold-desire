@@ -156,6 +156,13 @@ def default_payloads() -> dict[str, Any]:
         "opening_match": {
             "matches": [{"price": 39.1, "volume": 5200.0, "time_label": "09:25"}]
         },
+        "auction_series": {
+            "points": [
+                {"time_label": "09:19:58", "price": 39.05, "volume": 3100.0},
+                {"time_label": "09:20:03", "price": 39.2, "volume": 4800.0},
+                {"time_label": "09:21:10", "price": 39.18, "volume": 4650.0},
+            ]
+        },
         "monitor_stocks": {
             "data": [
                 {
@@ -221,6 +228,7 @@ class FakeProvider(BaseProvider):
         "newsflash",
         "minute_bars",
         "opening_match",
+        "auction_series",
         "monitor_stocks",
         "monitor_unusual",
     )

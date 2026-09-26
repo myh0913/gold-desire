@@ -34,6 +34,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -331,7 +332,7 @@ def attach_ws(app: FastAPI) -> None:
     original = app.router.lifespan_context
 
     @asynccontextmanager
-    async def _lifespan_with_ws_bus(router: FastAPI):
+    async def _lifespan_with_ws_bus(router: FastAPI) -> AsyncIterator[None]:
         import asyncio
 
         subscriber = asyncio.create_task(ws_bus.subscribe_ws_bus())

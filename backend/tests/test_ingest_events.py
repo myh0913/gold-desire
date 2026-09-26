@@ -7,15 +7,15 @@ from datetime import UTC, date, datetime
 from typing import Any, ClassVar
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 from app.core import ws_bus
 from app.core.cache import get_cache
 from app.core.config import get_settings
-from app.db.base import Base
 from app.datasources.base import BaseProvider, SourceKind
+from app.db.base import Base
 from app.ingest.events import notify_ingest_completed
 from app.ingest.pipeline import IngestResult
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 SH_DATE = date(2026, 6, 3)
 

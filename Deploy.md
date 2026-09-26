@@ -51,6 +51,11 @@ scripts/deploy.sh                      # 校验 .env → 构建 → 启动 → �
 # 登录前创建首个管理员见 docs/deploy-ops.md「§2.1 首个管理员」
 ```
 
+> **可选依赖 eltdx（竞价/撮合数据）**：J1 竞价抢筹与开盘撮合任务依赖 `eltdx` SDK。
+> systemd 直跑：`backend/.venv/bin/pip install ".[eltdx]"`；Docker 路径：在 `backend/Dockerfile`
+> 追加 `RUN pip install ".[eltdx]"` 后重建镜像。未安装时采集侧显式失败（不静默），仅影响
+> 撮合/竞价任务，其余策略不受影响。
+
 ## 6. 完整文档
 
 - 部署运维（必读）：[docs/deploy-ops.md](docs/deploy-ops.md)

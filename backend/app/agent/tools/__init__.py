@@ -2,6 +2,7 @@
 
 - :mod:`app.agent.tools.base`：工具协议、注册表与执行上下文；
 - :mod:`app.agent.tools.read`：只读工具（所有已认证角色可用）；
+- :mod:`app.agent.tools.market_query`：只读行情工具（自 read 拆出，所有已认证角色可用）；
 - :mod:`app.agent.tools.mutate`：变更工具（仅 admin）；
 - :mod:`app.agent.tools.query_table`：白名单表的结构化查询工具。
 
@@ -11,7 +12,7 @@
 
 from __future__ import annotations
 
-from app.agent.tools import mutate, query_table, read  # noqa: F401  （导入即注册）
+from app.agent.tools import market_query, mutate, query_table, read  # noqa: F401  （导入即注册）
 from app.agent.tools.base import (
     AgentTool,
     AuditHook,

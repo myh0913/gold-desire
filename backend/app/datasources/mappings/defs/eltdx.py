@@ -6,7 +6,7 @@
   240 点/日（09:31~11:30 → 0..119，13:01~15:00 → 120..239）；
   ``time_label`` 零填充 ``"HH:MM"``；``volume`` 单位**手**（分钟增量）；
   ``minute_index`` 由记录序号（``@index``）派生。
-- ``opening_match``：payload ``{"match": {price, volume, time_label}}``，
+- ``opening_match``：payload ``{"matches": [{price, volume, time_label}, ...]}``，
   09:25 正式撮合价即当日开盘价（旧系统 ``dragon`` 盘中分类的数据源）。
 """
 
@@ -48,8 +48,29 @@ _OPENING_MATCH = CapabilityMapping(
     ),
 )
 
+_AUCTION_SERIES = CapabilityMapping(
+    source_id="eltdx",
+    capability="auction_series",
+    record_path="points",
+    notes="竞价时序点：time_label 带秒（09:20:03）/ price 元 / matched_volume 手；"
+    "matched_amount 为估算（价×手×100，provider 折算）；当日无竞价点时 "
+    "points=[] → 0 条记录",
+    fields=(
+        FieldMap("code", None, "identity", context="args.thscode"),
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("time_label", "time_label", "to_str"),
+        FieldMap("price", "price", "to_float"),
+        FieldMap("matched_volume_lots", "matched_volume", "to_int", required=False),
+        FieldMap("matched_amount_yuan", "matched_amount", "to_float", required=False),
+    ),
+)
+
 #: eltdx 源全部能力的映射。
-ELTDX_MAPPINGS: tuple[CapabilityMapping, ...] = (_MINUTE_BAR, _OPENING_MATCH)
+ELTDX_MAPPINGS: tuple[CapabilityMapping, ...] = (
+    _MINUTE_BAR,
+    _OPENING_MATCH,
+    _AUCTION_SERIES,
+)
 
 
 def register_eltdx_mappings() -> None:

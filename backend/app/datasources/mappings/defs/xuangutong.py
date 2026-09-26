@@ -69,7 +69,8 @@ _LIMIT_UP_STOCK = CapabilityMapping(
         # pool_type 取自取数参数：一个任务对 7 种池型逐轮取数，各轮落各自池型。
         # 缺省 limit_up 与 provider 的 URL 默认值保持一致（未显式传池型时视作涨停池）。
         FieldMap(
-            "pool_type", None, "to_str", context="args.pool_name", default="limit_up", required=False
+            "pool_type", None, "to_str",
+            context="args.pool_name", default="limit_up", required=False,
         ),
         FieldMap("code", "symbol", "normalize_code"),
         FieldMap("name", "stock_chi_name", "to_str"),

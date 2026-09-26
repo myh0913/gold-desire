@@ -141,6 +141,7 @@ class StrategyContext:
         cache: 缓存后端。
         settings: 应用配置。
         replay_date: 回放模式的目标日期；``None`` 表示非回放。
+        param_version: 生效参数版本号（``v3`` → ``3``）；代码默认时为 ``None``。
     """
 
     strategy_id: str
@@ -154,6 +155,7 @@ class StrategyContext:
     cache: CacheBackend | None = None
     settings: Settings | None = None
     replay_date: date | None = None
+    param_version: int | None = None
 
 
 @dataclass(slots=True)
@@ -202,4 +204,5 @@ class StrategyContextFactory:
             cache=self.cache if self.cache is not None else get_cache(),
             settings=self.settings,
             replay_date=self.replay_date,
+            param_version=resolved.version_no,
         )

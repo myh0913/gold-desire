@@ -37,12 +37,10 @@ from app.ingest.events import CAPABILITY_EVENTS
 from app.ingest.tasks import (
     DEFAULT_TASKS,
     MONITOR_UNUSUAL_PAGES,
-    WRITERS,
-    _dedupe_monitor_rows,
     _monitor_stocks_args,
     _monitor_unusual_args,
-    _write_monitor_stocks,
 )
+from app.ingest.writers import WRITERS, _dedupe_monitor_rows, _write_monitor_stocks
 from app.models.market import MonitorStock
 from app.repositories import Repositories
 from sqlalchemy import func, select

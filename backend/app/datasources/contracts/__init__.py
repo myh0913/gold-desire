@@ -14,6 +14,7 @@ from app.datasources.contracts.base import (
     validate_records,
 )
 from app.datasources.contracts.models import (
+    AuctionSeriesContract,
     DailyBarContract,
     LadderRowContract,
     LimitUpStockContract,
@@ -30,6 +31,7 @@ from app.datasources.contracts.models import (
 __all__ = [
     "CAPABILITY_CONTRACTS",
     "DEGRADED",
+    "AuctionSeriesContract",
     "ContractModel",
     "ContractValidationError",
     "DailyBarContract",
@@ -59,6 +61,8 @@ CAPABILITY_CONTRACTS: dict[str, type[ContractModel]] = {
     "newsflash": NewsFlashContract,
     "minute_bars": MinuteBarContract,
     "opening_match": OpeningMatchContract,
+    # 竞价时序（eltdx 独有）：9:15~9:25 逐点虚拟撮合，供 J1 提炼 9:20 参考价。
+    "auction_series": AuctionSeriesContract,
     # 监管名单：两个端点形状不同 → 两个能力，共用同一份领域契约。
     "monitor_stocks": MonitorStockContract,
     "monitor_unusual": MonitorStockContract,

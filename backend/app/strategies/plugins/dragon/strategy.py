@@ -302,8 +302,12 @@ class DragonStrategy(BaseStrategy):
         （readme §8 时间轴的 09:25 行）。
         """
         if getattr(ctx, "repos", None) is None:
-            return {"strategy_id": self.strategy_id, "trade_date": ctx.trade_date.isoformat(), "advices": []}
-        from app.engine.dragon_samples import build_opening_samples
+            return {
+                "strategy_id": self.strategy_id,
+                "trade_date": ctx.trade_date.isoformat(),
+                "advices": [],
+            }
+        from app.engine.dragon_opening import build_opening_samples
 
         row = await ctx.repos.pool_snapshot.get(ctx.trade_date, "opening_match")
         opening: dict[str, float] = {}
@@ -470,7 +474,7 @@ class DragonStrategy(BaseStrategy):
                 "trade_date": ctx.trade_date,
                 "kind": KIND_ADVICE,
                 "strategy_id": self.strategy_id,
-                "strategy_version": None,
+                "strategy_version": ctx.param_version,
                 "code": advice.code,
                 "payload": advice.to_payload(),
                 "ran_at": ran_at,

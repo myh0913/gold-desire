@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -65,10 +66,8 @@ async def publish_event(channel: str, payload: Any) -> None:
     except Exception:  # pragma: no cover - Redis 抖动时回退本地
         logger.warning("ws_bus_publish_failed", exc_info=True, extra={"channel": channel})
         if _local_broadcaster is not None:
-            try:
+            with contextlib.suppress(Exception):  # pragma: no cover
                 await _local_broadcaster(channel, payload)
-            except Exception:  # pragma: no cover
-                pass
 
 
 async def subscribe_ws_bus() -> None:
@@ -98,7 +97,11 @@ async def subscribe_ws_bus() -> None:
                     continue
                 body = message.get("data")
                 try:
-                    payload = json.loads(body) if isinstance(body, (str, bytes, bytearray)) else body
+                    payload = (
+                        json.loads(body)
+                        if isinstance(body, (str, bytes, bytearray))
+                        else body
+                    )
                 except (TypeError, ValueError):
                     payload = body
                 if _local_broadcaster is not None:

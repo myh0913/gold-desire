@@ -22,7 +22,7 @@ from app.datasources.mappings.registry import get_mapping
 from app.datasources.providers import xuangutong as provider_module
 from app.datasources.providers.xuangutong import XuangutongProvider
 from app.db.base import Base
-from app.ingest.tasks import _replace_theme_stocks
+from app.ingest.writers import _replace_theme_stocks
 from app.models.market import Theme, ThemeStock
 from app.repositories import Repositories
 from sqlalchemy import func, select
@@ -43,7 +43,9 @@ PLATES = {
 }
 
 
-def _client_factory(handler: Callable[[httpx.Request], httpx.Response]) -> Callable[[], httpx.AsyncClient]:
+def _client_factory(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> Callable[[], httpx.AsyncClient]:
     """把 provider 的默认 client 换成离线 MockTransport（provider 负责关闭）。"""
 
     def factory() -> httpx.AsyncClient:
@@ -114,7 +116,9 @@ def test_core_avg_pcp_is_decimal_passthrough() -> None:
         mapping,
         {
             "code": 20000,
-            "data": {"items": [{"id": 1, "name": "医药", "core_avg_pcp": 0.041, "description": "x"}]},
+            "data": {
+                "items": [{"id": 1, "name": "医药", "core_avg_pcp": 0.041, "description": "x"}]
+            },
         },
         context={"args": {"date": DAY}},
     )
@@ -168,7 +172,9 @@ def _stock_row(theme_name: str, code: str) -> dict[str, object]:
 
 
 async def _names(session: AsyncSession) -> list[str]:
-    rows = await session.execute(select(Theme.name).where(Theme.trade_date == DAY).order_by(Theme.rank))
+    rows = await session.execute(
+        select(Theme.name).where(Theme.trade_date == DAY).order_by(Theme.rank)
+    )
     return list(rows.scalars().all())
 
 
@@ -209,7 +215,9 @@ async def test_replace_theme_stocks_backfills_core_count() -> None:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
         repos = Repositories.build(session)
-        await repos.themes.replace_themes(DAY, themes=[_theme_row("医药", 1), _theme_row("机器人", 2)])
+        await repos.themes.replace_themes(
+            DAY, themes=[_theme_row("医药", 1), _theme_row("机器人", 2)]
+        )
         await session.flush()
 
         class _Row:

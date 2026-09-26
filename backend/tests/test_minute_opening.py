@@ -21,13 +21,10 @@ import pytest
 from app.core.config import get_settings
 from app.datasources.base import BaseProvider, SourceKind
 from app.datasources.providers.fake import FakeProvider
-from app.engine.dragon_samples import (
-    _dates_adjacent,
-    _has_suspect_day,
-    _is_sanbanzu_wave,
-    build_opening_samples,
-    minute_time_label,
-)
+from app.engine.dragon_bars import _has_suspect_day, _is_sanbanzu_wave
+from app.engine.dragon_model import minute_time_label
+from app.engine.dragon_opening import build_opening_samples
+from app.engine.dragon_samples import _dates_adjacent
 from app.ingest.scheduler import IngestScheduler
 from app.ingest.tasks import OPENING_MATCH_POOL_NAME
 from app.repositories import Repositories
@@ -77,10 +74,7 @@ async def _seed_dive_minutes(
         pre = 17.666  # D 日（06-03）昨收
         rows = []
         for i in range(240):
-            if i < 210:
-                price = pre * 0.99
-            else:
-                price = pre * 0.99 - (pre * 0.07) * (i - 210) / 29.0
+            price = pre * 0.99 if i < 210 else pre * 0.99 - (pre * 0.07) * (i - 210) / 29.0
             rows.append(
                 {
                     "code": code,
@@ -200,7 +194,7 @@ async def test_build_opening_samples_views(seeded) -> None:
     async with seeded() as session:
         repos = Repositories.build(session)
         samples = await build_opening_samples(repos, TODAY, {STOCK_CODE: 16.2})
-    s2 = [sample for sample in samples if sample.D == date(2026, 6, 3)]
+    s2 = [sample for sample in samples if date(2026, 6, 3) == sample.D]
     assert s2, "应构造出 D=06-03 的 S2 开盘样本"
     assert s2[0].t.open == pytest.approx(16.2)
     assert s2[0].t.open_pct == pytest.approx(16.2 / 16.9 - 1)
@@ -209,6 +203,14 @@ async def test_build_opening_samples_views(seeded) -> None:
     async with seeded() as session:
         repos = Repositories.build(session)
         assert await build_opening_samples(repos, TODAY, {"600003": 10.0}) == []
+
+
+async def test_build_opening_samples_rejects_exrights_artifact(seeded) -> None:
+    """回归（除权护栏）：撮合价 vs 最近收盘越界（10 转 10 未复权 ≈ -53%）不产样本。"""
+    async with seeded() as session:
+        repos = Repositories.build(session)
+        # 8.0 / 16.9 - 1 ≈ -52.7%，远超 ±10.5% → 整票拒收
+        assert await build_opening_samples(repos, TODAY, {STOCK_CODE: 8.0}) == []
 
 
 async def test_build_opening_samples_requires_calendar(seeded) -> None:

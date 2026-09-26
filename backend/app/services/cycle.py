@@ -6,6 +6,11 @@
 信号；高晋级 + 高炸板 → 高位分歧不退潮）。本模块**只在数据来源上适配** gold-desire：
 指标全部从**库**取（情绪指标 + 涨停池 + 跌停池），不直连上游。
 
+**T-0008 三条修订**（用户 2026-09-24 拍板方案 A，历史装配见
+`app.services.cycle_history`）：①固定阈值 → 滚动 120 交易日分位（不足 60 日回退
+固定值）；②长熊开关（连续 5 冷日开 / 10 热日解，开启时修复/加速态追高腿禁买，
+接线在 ``app.strategies.registry``）；③宇宙剔 ST（判定口径从池行数现算）。
+
 六态取值与 :class:`app.strategies.protocol.CycleState` 完全一致，故直接复用该枚举，
 不另立一份。
 
@@ -52,10 +57,10 @@ class CycleThresholds:
     divergence_break_ratio: float = 0.25
     divergence_promotion: float = 0.15
 
-    # 加速/高潮（用户确认：三条同时满足）
+    # 加速/高潮（用户确认：三条同时满足；高度线 T-0008 起为滚动分位动态值）
     accel_temp: float = 60.0
     accel_promotion: float = 0.25
-    accel_height: int = 5
+    accel_height: float = 5.0
 
     # 修复
     repair_temp_low: float = 30.0
@@ -63,10 +68,10 @@ class CycleThresholds:
     repair_limit_up: int = 40
     repair_break_ratio: float = 0.25
 
-    # 冰点
+    # 冰点（涨停线 T-0008 起为滚动分位动态值）
     ice_temp: float = 30.0
     ice_limit_down: int = 30
-    ice_limit_up: int = 30
+    ice_limit_up: float = 30.0
 
     # 冰点转折（保留：参考实现中定义，v0 未参与判定分支）
     turn_limit_up: int = 50
@@ -102,6 +107,8 @@ class CycleIndicators:
     leader_name: str = ""
     leader_limit_down: bool = False
     index_daily_pct: float | None = None
+    #: 长熊开关（T-0008）：True = 修复/加速态追高腿禁买（接线见 registry）。
+    bear_switch: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         """转 JSON 友好字典（落库用）。"""
@@ -117,6 +124,7 @@ class CycleIndicators:
             "leader_name": self.leader_name,
             "leader_limit_down": self.leader_limit_down,
             "index_daily_pct": self.index_daily_pct,
+            "bear_switch": self.bear_switch,
         }
 
 
@@ -195,7 +203,7 @@ def classify(
         or (t is not None and t < th.retreat_temp_floor)
     ):
         j.state = CycleState.RETREAT
-        if high_break and weak_alongside:
+        if high_break and weak_alongside and br is not None:
             j.reasons.append(
                 f"炸板率{br * 100:.1f}%≥{th.retreat_break_ratio * 100:.0f}% 且 晋级率弱/跌停多"
             )
@@ -258,7 +266,7 @@ def classify(
         j.state = CycleState.ACCEL
         j.reasons.append(
             f"温度{t:.0f}≥{th.accel_temp:.0f} + 晋级{ind.promotion_rate * 100:.0f}%≥"
-            f"{th.accel_promotion * 100:.0f}% + 高度{ind.board_height}≥{th.accel_height}"
+            f"{th.accel_promotion * 100:.0f}% + 高度{ind.board_height}≥{th.accel_height:g}"
         )
     elif (
         t is not None
@@ -297,59 +305,10 @@ def now_utc() -> datetime:
 
 
 # ============================================================ 指标装配（读库）
-
-
-async def build_indicators(repos: Any, trade_date: date) -> CycleIndicators:
-    """从**库**装配单日指标（情绪指标 + 涨停池 + 跌停池），不直连上游。
-
-    口径对照参考实现 `compute_indicators`：
-
-    - 温度 / 涨跌停家数 / 炸板率：``market_sentiment``（其中炸板率用
-      ``炸板 / (炸板 + 涨停)`` 由计数**现算**，与参考实现一致）；
-    - 高度 / 龙头：当日 ``limit_up`` 池按连板天数取最高（并列时封单额大者优先）；
-    - 晋级率：``yesterday_limit_up`` 池 ∩ ``limit_up`` 池 / ``yesterday_limit_up`` 池。
-      该池即「昨日涨停」在本日的归档池，与参考实现的「上一交易日涨停池」同义；
-    - 龙头是否跌停：龙头 code 是否出现在当日 ``limit_down`` 池；
-    - 指数日涨幅：**gold-desire 未采集 → 恒为 None**（黑天鹅规则只剩跌停腿，
-      由 ``data_degraded`` 之外的规则差异体现）。
-    """
-    ind = CycleIndicators(trade_date=trade_date)
-
-    sentiment = await repos.market_sentiment.get(trade_date)
-    if sentiment is not None:
-        ind.temperature = _num(sentiment.temperature)
-        ind.limit_up_count = int(sentiment.limit_up_count or 0)
-        ind.limit_down_count = int(sentiment.limit_down_count or 0)
-        broken = int(sentiment.broken_board_count or 0)
-        if ind.limit_up_count + broken > 0:
-            ind.break_ratio = broken / (ind.limit_up_count + broken)
-
-    today = await repos.limit_up_pool.get_pool(trade_date, "limit_up")
-    yesterday = await repos.limit_up_pool.get_pool(trade_date, "yesterday_limit_up")
-
-    if today:
-        ind.board_height = max(int(row.continue_days or 0) for row in today)
-        leader = max(
-            today,
-            key=lambda row: (
-                int(row.continue_days or 0),
-                _num(row.seal_amount_yuan) or 0.0,
-            ),
-        )
-        ind.leader_code = str(leader.code)
-        ind.leader_name = str(leader.name)
-
-    if yesterday:
-        prev_codes = {str(row.code) for row in yesterday}
-        cur_codes = {str(row.code) for row in today}
-        if prev_codes:
-            ind.promotion_rate = len(prev_codes & cur_codes) / len(prev_codes)
-
-    if ind.leader_code:
-        downs = await repos.limit_up_pool.get_pool(trade_date, "limit_down")
-        ind.leader_limit_down = any(str(row.code) == ind.leader_code for row in downs)
-
-    return ind
+#
+# T-0008 起 ``build_indicators`` 移至 `app.services.cycle_history`（滚动分位阈值 +
+# 长熊开关 + 剔 ST 需要历史序列装配，独立成模块避免本文件超长）；本模块经
+# ``CycleService.judge`` 延迟导入调用，避免循环 import（先例：``_position_factor``）。
 
 
 def _position_factor(state: CycleState) -> float | None:
@@ -387,11 +346,20 @@ class CycleService:
         self._th = thresholds
 
     async def judge(self, trade_date: date) -> CycleJudgement:
-        """判定并**幂等落库**（同日重跑只留最新一次），返回判定结果。"""
-        indicators = await build_indicators(self._repos, trade_date)
+        """判定并**幂等落库**（同日重跑只留最新一次），返回判定结果。
+
+        T-0008：指标 + 动态阈值 + 长熊开关由 `app.services.cycle_history` 装配
+        （滚动 120 日分位、剔 ST、开关状态机）；开关开启时在 reasons 追加禁买
+        说明，payload 经 ``to_payload`` 自动带 ``bear_switch``。
+        """
+        from app.services.cycle_history import build_indicators  # 延迟导入避免循环
+
+        indicators, thresholds = await build_indicators(self._repos, trade_date, self._th)
         prev_state = await self._repos.cycle_judgements.previous_state(trade_date)
         prev = CycleState(prev_state) if prev_state in CycleState._value2member_map_ else None
-        judgement = classify(indicators, self._th, prev)
+        judgement = classify(indicators, thresholds, prev)
+        if indicators.bear_switch:
+            judgement.reasons.append("长熊开关：开启，修复/加速态追高腿禁买")
         state = judgement.state
         await self._repos.cycle_judgements.upsert_one(
             {

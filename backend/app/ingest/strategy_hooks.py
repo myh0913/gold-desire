@@ -9,14 +9,16 @@
   产出结构化建议落 ``advice_reports``（买点为 T / T1 开盘，记录口径见各建议
   ``buy_day``）。
 
-> 说明：真·盘中 09:25 实时判定需要竞价/实时行情源，当前数据源能力不含此项；
-> 本钩子产出的是**数据齐备后的确认记录**，供「量化选股 / 复盘」消费。
+> 说明：``Phase.OPENING``（竞价阶段）由 ``auction`` 窗口触发（09:25 撮合数据
+> 就绪后），基于集合竞价数据实时判定（J1 ``auction_grab``）；盘后 POOL/INTRADAY
+> 产出的是**数据齐备后的确认记录**，供「量化选股 / 复盘」消费。
 
 **幂等**：每阶段每日状态落 ``pool_snapshot``（``pool_name='strategy_state:<phase>'``），
 成功不重跑；失败不标记成功，窗口内随调度 tick 重试（与采集任务同语义）。
 
-**推送**：POOL 完成 → WS ``pool`` 频道；INTRADAY 产出建议 → WS ``advice`` 频道
-（经 :mod:`app.core.ws_bus` 跨进程中转，见该模块说明）。
+**推送**：POOL 完成 → WS ``pool`` 频道；INTRADAY / OPENING 产出建议 → WS
+``advice`` 频道（**逐策略一条**，``source`` 为 ``strategy:<strategy_id>``；
+经 :mod:`app.core.ws_bus` 跨进程中转，见该模块说明）。
 """
 
 from __future__ import annotations
@@ -113,17 +115,19 @@ async def _broadcast_phase(phase: Phase, trade_date: date, summary: PhaseRunSumm
             )
             return
         if phase in (Phase.INTRADAY, Phase.OPENING):
-            advices: list[dict[str, Any]] = []
             for result in summary.results:
-                if result.ok and isinstance(result.output, dict):
-                    raw = result.output.get("advices")
-                    if isinstance(raw, list):
-                        advices.extend(item for item in raw if isinstance(item, dict))
-            if advices:
+                if not (result.ok and isinstance(result.output, dict)):
+                    continue
+                raw = result.output.get("advices")
+                if not isinstance(raw, list):
+                    continue
+                advices = [item for item in raw if isinstance(item, dict)]
+                if not advices:
+                    continue
                 await publish_event(
                     "advice",
                     {
-                        "source": "strategy:dragon",
+                        "source": f"strategy:{result.strategy_id}",
                         "phase": phase.value,
                         "trade_date": trade_date.isoformat(),
                         "count": len(advices),
@@ -151,6 +155,7 @@ async def run_strategy_phases(
         if await _state_status(repos, phase, trade_date) == "succeeded":
             continue
         factory = StrategyContextFactory(repos=repos, settings=settings, trade_date=trade_date)
+        summary_failed_marker: str | None = None
         try:
             summary = await run_phase(phase, factory, repos)
         except Exception as exc:
@@ -160,8 +165,6 @@ async def run_strategy_phases(
             )
             summary = PhaseRunSummary(phase=phase, trade_date=trade_date, results=())
             summary_failed_marker = f"{type(exc).__name__}: {exc}"
-        else:
-            summary_failed_marker = None
         status = (
             "succeeded"
             if summary.failure_count == 0 and summary_failed_marker is None

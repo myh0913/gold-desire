@@ -112,5 +112,7 @@ export interface DragonAdvicePayload {
   position: number | null;
   stop_loss_price: number | null;
   sell_timing: string | null;
+  /** 复盘了结价口径：`"open"` 按 T+1 开盘价（J1 竞价抢筹）；缺省按 T+1 收盘。 */
+  sell_price_ref?: 'open' | 'close';
   field_snapshot: Record<string, unknown>;
 }

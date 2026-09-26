@@ -156,12 +156,18 @@ class ReviewService:
     ) -> ReviewAdviceOutcomeOut:
         """按日线口径评估单条建议的结果。
 
+        卖出口径由 payload ``sell_price_ref`` 决定（T-0017）：``"open"`` 按
+        可卖日**开盘价**了结（J1 竞价抢筹 T+1 开盘卖），缺省/``"close"`` 按
+        可卖日**收盘价**（向后兼容历史行）。止损优先级不变：声明了止损价且
+        可卖日最低价触及才按止损。
+
         ``ran_at`` 取**报告行级**值（同一次运行整批统一；历史行 payload 内无
         ``ran_at`` 键，此前恒为空）。
         """
         code = str(payload.get("code") or "")
         buy_price = _opt_float(payload.get("buy_price"))
         stop_price = _opt_float(payload.get("stop_loss_price"))
+        sell_price_ref = str(payload.get("sell_price_ref") or "close")
 
         base = ReviewAdviceOutcomeOut(
             code=code,
@@ -173,7 +179,7 @@ class ReviewService:
             position=_opt_float(payload.get("position")),
             stop_loss_price=stop_price,
             sell_timing=payload.get("sell_timing"),
-            bonus_score=payload.get("bonus_score") if payload.get("bonus_score") is not None else None,
+            bonus_score=payload.get("bonus_score"),
             status="pending",
             ran_at=ran_at.isoformat() if ran_at is not None else None,
         )
@@ -195,13 +201,15 @@ class ReviewService:
                     "sell_price": stop_price,
                 }
             )
-        close = float(sell_bar.close)
+        sell_price = (
+            float(sell_bar.open) if sell_price_ref == "open" else float(sell_bar.close)
+        )
         return base.model_copy(
             update={
                 "status": "closed",
-                "return_pct": close / buy_price - 1,
+                "return_pct": sell_price / buy_price - 1,
                 "sell_date": sell_bar.trade_date,
-                "sell_price": close,
+                "sell_price": sell_price,
             }
         )
 

@@ -187,6 +187,22 @@ _FAKE_OPENING_MATCH = CapabilityMapping(
     ),
 )
 
+_FAKE_AUCTION_SERIES = CapabilityMapping(
+    source_id="fake",
+    capability="auction_series",
+    record_path="points",
+    notes="竞价时序（fake）：time_label 带秒 / price / volume(手)；不提供金额列"
+    "（测 required=False 缺失留空路径）",
+    fields=(
+        FieldMap("code", None, "identity", context="args.thscode"),
+        FieldMap("trade_date", None, "str_to_date", context="args.date"),
+        FieldMap("time_label", "time_label", "to_str"),
+        FieldMap("price", "price", "to_float"),
+        FieldMap("matched_volume_lots", "volume", "to_int", required=False),
+        FieldMap("matched_amount_yuan", "amount", "to_float", required=False),
+    ),
+)
+
 _FAKE_MONITOR_RESTRICTED = CapabilityMapping(
     source_id="fake",
     capability="monitor_stocks",
@@ -236,6 +252,7 @@ FAKE_MAPPINGS: tuple[CapabilityMapping, ...] = (
     _NEWS_FLASH,
     _FAKE_MINUTE_BAR,
     _FAKE_OPENING_MATCH,
+    _FAKE_AUCTION_SERIES,
     _FAKE_MONITOR_RESTRICTED,
     _FAKE_MONITOR_UNUSUAL,
 )

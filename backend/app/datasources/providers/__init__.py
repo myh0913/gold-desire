@@ -51,6 +51,8 @@ REAL_CAPABILITY_PROVIDERS: dict[str, list[str]] = {
     "newsflash": ["xuangutong", "fake"],
     "minute_bars": ["eltdx", "fake"],
     "opening_match": ["eltdx", "fake"],
+    # 竞价时序唯一真实源为 eltdx（auctions 专用 transport），无 HTTP 备源，fake 兜底。
+    "auction_series": ["eltdx", "fake"],
     # 监管名单唯一真实源为东财，两个端点（重点监控裸数组 / 异常波动数据中心信封）
     # 形状不同故拆两个能力，共用同一契约；无 HTTP 备源，fake 兜底。
     "monitor_stocks": ["eastmoney", "fake"],

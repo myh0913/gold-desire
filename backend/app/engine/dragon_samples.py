@@ -8,6 +8,10 @@
 :mod:`app.engine.dragon_legacy` 则把已验证的离线样本夹具转成同一 :class:`DragonSample`，
 仅用于复现 readme 基线数值。二者产出同一类型，故策略 / 卖出规则 / 组合代码路径完全共用。
 
+**模块拆分**（规范：单文件 ≤500 行）：类型与形态分类在 :mod:`app.engine.dragon_model`
+（本模块再导出，历史 import 路径不变）；K 线视图 / 涨停等判定助手在
+:mod:`app.engine.dragon_bars`；09:25 开盘注入路径在 :mod:`app.engine.dragon_opening`。
+
 样本口径（readme §2）：
 
 1. 至少 **2 连板**（紧邻无间隔，构成「连板波」）；
@@ -26,504 +30,39 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
-from app.factors.base import Bar, FactorContext, MinutePoint
+from app.engine.dragon_bars import (
+    _day_metrics,
+    _has_suspect_day,
+    _is_limit_up,
+    _is_main_board_code,
+    _is_one_word,
+    _is_sanbanzu_wave,
+    _mean,
+    _minute_metrics,
+    _pct,
+    _ratio,
+    _to_float,
+    _with_pre_close,
+)
+from app.engine.dragon_model import (
+    DayMetrics,
+    DragonSample,
+    MinuteMetrics,
+    classify_shape,
+    minute_time_label,
+)
 
 __all__ = [
     "DayMetrics",
     "DragonSample",
     "MinuteMetrics",
-    "build_opening_samples",
     "build_samples",
     "classify_shape",
     "minute_time_label",
 ]
-
-#: 主板涨停判定阈值（相对昨收涨幅，含 10% 涨跌幅四舍五入误差）。
-_LIMIT_UP_PCT = 0.095
-
-#: suspect 阈值（对齐旧项目 analyzer.SUSPECT_PCT）：主板 ±10% 下越界只可能是
-#: 除权除息 / 送转 / 坏数据 → 整票拒收。
-_SUSPECT_PCT = 0.105
-
-#: 三板组（sanbanzu）量能特征阈值（对齐旧项目 analyzer.is_sanbanzu）。
-_SANBANZU_FIRST_VS_PRE = 1.2
-_SANBANZU_ONE_WORD_VS_FIRST = 0.1
-
-#: 形态分类默认参数（可覆盖；readme §9 五类形态）。
-_EARLY_WINDOW = 30
-_LATE_INDEX = 90
-_LOW_POS = 0.3
-_DIVE_DROP = 0.03
-_FLAT_RANGE = 0.03
-
-
-@dataclass(frozen=True, slots=True)
-class MinuteMetrics:
-    """分时派生指标（readme §10 ``mp_D`` 对象；``mp_T`` / ``mp_T1`` / ``mp_T2`` 同形）。"""
-
-    n: int = 0
-    high_pct: float | None = None
-    low_pct: float | None = None
-    close_pct: float | None = None
-    amp_pct: float | None = None
-    low_time_i: int | None = None
-    close_pos: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class DayMetrics:
-    """单日全天字段（readme §10 ``t`` / ``t1`` / ``t2`` 对象）。"""
-
-    open: float | None = None
-    high: float | None = None
-    low: float | None = None
-    close: float | None = None
-    open_pct: float | None = None
-    high_pct: float | None = None
-    low_pct: float | None = None
-    close_pct: float | None = None
-    amp_pct: float | None = None
-    volume: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class DragonSample:
-    """单条龙回头结构样本（字段名对齐 readme §10）。
-
-    ``mp_D`` / ``t`` / ``t1`` / ``t2`` 为嵌套对象（分时派生指标 / 各日全天字段），引用时须写
-    全路径（``t.open_pct``、``mp_D.low_time_i``）。``px_*`` 为对应交易日的分钟收盘价序列
-    （按分钟序号升序，用于卖出规则撮合与买入价定位）。
-    """
-
-    code: str
-    name: str
-    D: date
-    T: date
-    T1: date
-    T2: date | None = None
-    boards: int = 0
-    wave_vol_trend: float | None = None
-    wave_one_word_cnt: int = 0
-    wave_peak_vol: float | None = None
-    wave_mean_vol: float | None = None
-    wave_last_vol: float | None = None
-    wave_first_vol: float | None = None
-    d_amp_pct: float | None = None
-    d_open_pct: float | None = None
-    d_high_pct: float | None = None
-    d_low_pct: float | None = None
-    d_close_pct: float | None = None
-    d_vol: float | None = None
-    shape_label: str | None = None
-    vol_vs_prev: float | None = None
-    vol_vs_wavepeak: float | None = None
-    vol_vs_wavemean: float | None = None
-    t_vol_vs_d: float | None = None
-    is_sanbanzu: bool = False
-    pre_close: float | None = None
-    mp_D: MinuteMetrics = field(default_factory=MinuteMetrics)
-    t: DayMetrics = field(default_factory=DayMetrics)
-    t1: DayMetrics = field(default_factory=DayMetrics)
-    t2: DayMetrics = field(default_factory=DayMetrics)
-    px_D: tuple[float, ...] = ()
-    px_T: tuple[float, ...] = ()
-    px_T1: tuple[float, ...] = ()
-    px_T2: tuple[float, ...] = ()
-
-    # ------------------------------------------------------------ 字段快照 / 上下文
-
-    def metrics(self) -> dict[str, Any]:
-        """返回 readme §10 口径的扁平/嵌套指标字典（供 :class:`FactorContext`）。"""
-        return {
-            "boards": self.boards,
-            "wave_vol_trend": self.wave_vol_trend,
-            "wave_one_word_cnt": self.wave_one_word_cnt,
-            "d_amp_pct": self.d_amp_pct,
-            "shape_label": self.shape_label,
-            "d_open_pct": self.d_open_pct,
-            "d_high_pct": self.d_high_pct,
-            "d_low_pct": self.d_low_pct,
-            "d_close_pct": self.d_close_pct,
-            "vol_vs_prev": self.vol_vs_prev,
-            "vol_vs_wave_peak": self.vol_vs_wavepeak,
-            "vol_vs_wave_mean": self.vol_vs_wavemean,
-            "t_vol_vs_d": self.t_vol_vs_d,
-            "mp_D.low_time_i": self.mp_D.low_time_i,
-            "mp_D.close_pos": self.mp_D.close_pos,
-            "mp_D.amp_pct": self.mp_D.amp_pct,
-            "t.open_pct": self.t.open_pct,
-            "t.close_pct": self.t.close_pct,
-            "t.amp_pct": self.t.amp_pct,
-            "t1.open_pct": self.t1.open_pct,
-            "pre_close": self.pre_close,
-        }
-
-    def field_snapshot(self) -> dict[str, Any]:
-        """返回建议记录所需的**依据字段快照**（readme §8：建议可解释）。"""
-        return {
-            "code": self.code,
-            "D": self.D.isoformat(),
-            "T": self.T.isoformat(),
-            "T1": self.T1.isoformat(),
-            "shape_label": self.shape_label,
-            "d_amp_pct": self.d_amp_pct,
-            "t.open_pct": self.t.open_pct,
-            "t.close_pct": self.t.close_pct,
-            "t_vol_vs_d": self.t_vol_vs_d,
-            "mp_D.low_time_i": self.mp_D.low_time_i,
-            "boards": self.boards,
-        }
-
-    def factor_context(self) -> FactorContext:
-        """构造因子计算上下文（因子只读本对象，保持纯函数）。"""
-        return FactorContext(
-            code=self.code,
-            trade_date=self.D,
-            d_bar=self._bar_from(
-                self.pre_close,
-                self.d_open_pct,
-                self.d_high_pct,
-                self.d_low_pct,
-                self.d_close_pct,
-                self.d_vol,
-            ),
-            d_prev_bar=None,
-            t_bar=self._absolute_bar(self.t, self._price(self.pre_close, self.d_close_pct)),
-            t1_bar=self._absolute_bar(self.t1, self._price(self.pre_close, self.t.close_pct)),
-            minute_d=self._minute_points(self.px_D),
-            metrics=self.metrics(),
-        )
-
-    # ------------------------------------------------------------ 日线定位
-
-    def buy_day(self, day_field: str) -> date | None:
-        """取买入日历日（``day_field`` 为 ``"T"`` / ``"T1"``）。"""
-        if day_field == "T":
-            return self.T
-        if day_field == "T1":
-            return self.T1
-        return None
-
-    def day_metrics(self, day_field: str) -> DayMetrics:
-        """取某日的全天字段对象（``"T"`` / ``"T1"`` / ``"T2"``）。"""
-        return {"T": self.t, "T1": self.t1, "T2": self.t2}.get(day_field, DayMetrics())
-
-    def minute_prices(self, day_field: str) -> tuple[float, ...]:
-        """取某日的分钟收盘价序列（``"D"`` / ``"T"`` / ``"T1"`` / ``"T2"``）。"""
-        return {
-            "D": self.px_D,
-            "T": self.px_T,
-            "T1": self.px_T1,
-            "T2": self.px_T2,
-        }.get(day_field, ())
-
-    # ------------------------------------------------------------ 内部
-
-    @staticmethod
-    def _price(pre_close: float | None, pct: float | None) -> float | None:
-        """由昨收与涨幅还原价格。"""
-        if pre_close is None or pct is None:
-            return None
-        return pre_close * (1 + pct)
-
-    @classmethod
-    def _bar_from(
-        cls,
-        pre_close: float | None,
-        open_pct: float | None,
-        high_pct: float | None,
-        low_pct: float | None,
-        close_pct: float | None,
-        volume: float | None,
-    ) -> Bar | None:
-        """由昨收 + 各价涨幅构造日线（best-effort，仅作因子回退用）。"""
-        open_px = cls._price(pre_close, open_pct)
-        high_px = cls._price(pre_close, high_pct)
-        low_px = cls._price(pre_close, low_pct)
-        close_px = cls._price(pre_close, close_pct)
-        if (
-            open_px is None
-            or high_px is None
-            or low_px is None
-            or close_px is None
-            or pre_close is None
-        ):
-            return None
-        return Bar(
-            open=float(open_px),
-            high=float(high_px),
-            low=float(low_px),
-            close=float(close_px),
-            pre_close=float(pre_close),
-            volume_shares=float(volume or 0.0),
-        )
-
-    @classmethod
-    def _absolute_bar(cls, day: DayMetrics, pre_close: float | None) -> Bar | None:
-        """由全天字段（绝对价）构造日线。"""
-        if (
-            day.open is None
-            or day.high is None
-            or day.low is None
-            or day.close is None
-            or pre_close is None
-        ):
-            return None
-        return Bar(
-            open=float(day.open),
-            high=float(day.high),
-            low=float(day.low),
-            close=float(day.close),
-            pre_close=float(pre_close),
-            volume_shares=float(day.volume or 0.0),
-        )
-
-    @staticmethod
-    def _minute_points(prices: Sequence[float]) -> tuple[MinutePoint, ...]:
-        """由分钟价序列构造 :class:`MinutePoint` 元组（成交量信息缺失，置 0）。"""
-        return tuple(
-            MinutePoint(
-                index=index,
-                time_label=minute_time_label(index),
-                price=price,
-                volume_lots=0.0,
-            )
-            for index, price in enumerate(prices)
-        )
-
-
-def minute_time_label(index: int) -> str:
-    """把分钟序号映射为 ``HH:MM``（readme §1.3：0~119 = 09:31~11:30，120~239 = 13:01~15:00）。"""
-    total = 9 * 60 + 31 + index if index < 120 else 13 * 60 + 1 + (index - 120)
-    return f"{total // 60:02d}:{total % 60:02d}"
-
-
-def classify_shape(
-    prices: Sequence[float],
-    pre_close: float,
-    *,
-    early_window: int = _EARLY_WINDOW,
-    late_index: int = _LATE_INDEX,
-    low_pos: float = _LOW_POS,
-    dive_drop: float = _DIVE_DROP,
-    flat_range: float = _FLAT_RANGE,
-) -> str:
-    """按分时价格序列判定首阴形态（readme §9 五类）。
-
-    这是**文档化的启发式近似**（生产 analyzer 的标签为准；本函数仅在标签缺失时用于
-    从库内分时派生）。判定优先级：
-
-    1. 低点出现在尾盘且尾盘相对盘中明显下挫、收盘贴近低点 → ``尾盘跳水``；
-    2. 高点出现在早盘、之后回落且收盘贴近低点 → ``冲高回落``；
-    3. 低点出现在早盘且收盘贴近低点 → ``早盘急杀后横盘``；
-    4. 全天振幅窄且收盘位置低 → ``低位横盘震荡``；
-    5. 其余 → ``单边下跌``。
-    """
-    if not prices or pre_close <= 0:
-        return "单边下跌"
-    pct = [price / pre_close - 1 for price in prices]
-    count = len(pct)
-    low = min(pct)
-    high = max(pct)
-    low_i = pct.index(low)
-    high_i = pct.index(high)
-    span = high - low
-    close_pos = (pct[-1] - low) / span if span > 0 else 0.5
-    ref = pct[min(count - 1, 180)] if count > 180 else pct[count // 2]
-
-    if low_i >= late_index and ref - pct[-1] >= dive_drop and close_pos <= low_pos:
-        return "尾盘跳水"
-    if high_i < early_window and close_pos <= low_pos:
-        return "冲高回落"
-    if low_i < early_window and close_pos <= low_pos:
-        return "早盘急杀后横盘"
-    if close_pos <= low_pos and span <= flat_range:
-        return "低位横盘震荡"
-    return "单边下跌"
-
-
-# ============================================================ 样本构建
-
-
-def _to_float(value: Any) -> float | None:
-    """尽力转 ``float``；``None`` / 不可解析 → ``None``（不抛异常）。"""
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class _BarView:
-    """日线**只读视图** + 回填的昨收。
-
-    用副本而非直接改 ORM 实例，避免把 ``pre_close`` 写脏回库。
-    """
-
-    trade_date: date
-    open: float
-    high: float
-    low: float
-    close: float
-    pre_close: float | None
-    volume_shares: float
-
-
-def _with_pre_close(bars: Sequence[Any]) -> list[_BarView]:
-    """给日线序列**回填昨收**，返回只读视图。
-
-    为什么必须回填：上游日线不带昨收，库中 ``daily_bars.pre_close`` 实测
-    **4593/4593 全为 NULL**，而涨停判定 / 振幅 / 首阴形态 / 样本构造**全部**依赖
-    昨收。此前 ``_is_limit_up`` 直接 ``float(bar.pre_close)`` 抛 ``TypeError``，
-    导致 dragon 策略每次运行必崩（实测当日 239 次 pool + 239 次 intraday 全落
-    error 报告，且一条建议都没产出）。
-
-    昨收取**序列中前一根日线的收盘价**：日线按日期升序、同一股票同一交易日唯一，
-    停牌/缺失日自然跳过——此时昨收即最近一次成交的收盘价，语义不变。
-    行上已有 ``pre_close`` 时优先用它；首根无昨收 → ``None``。
-    """
-    views: list[_BarView] = []
-    prev_close: float | None = None
-    for bar in bars:
-        close = _to_float(getattr(bar, "close", None))
-        views.append(
-            _BarView(
-                trade_date=bar.trade_date,
-                open=_to_float(getattr(bar, "open", None)) or 0.0,
-                high=_to_float(getattr(bar, "high", None)) or 0.0,
-                low=_to_float(getattr(bar, "low", None)) or 0.0,
-                close=close or 0.0,
-                pre_close=_to_float(getattr(bar, "pre_close", None)) or prev_close,
-                volume_shares=_to_float(getattr(bar, "volume_shares", None)) or 0.0,
-            )
-        )
-        prev_close = close
-    return views
-
-
-def _is_limit_up(bar: Any) -> bool:
-    """是否涨停（主板 10%，含四舍五入容差）。
-
-    ``pre_close`` 缺失 → **判否**：缺少昨收无法计算涨停幅度，不得臆断。
-    日线序列应先经 :func:`_with_pre_close` 回填昨收。
-    """
-    pre_close = _to_float(getattr(bar, "pre_close", None))
-    close = _to_float(getattr(bar, "close", None))
-    if pre_close is None or close is None or pre_close <= 0:
-        return False
-    return close / pre_close - 1 >= _LIMIT_UP_PCT
-
-
-def _is_one_word(bar: Any) -> bool:
-    """是否一字板（涨停且全天未离开涨停价）。"""
-    if not _is_limit_up(bar):
-        return False
-    low = _to_float(getattr(bar, "low", None))
-    close = _to_float(getattr(bar, "close", None))
-    return low is not None and close is not None and low >= close - 1e-6
-
-
-def _is_sanbanzu_wave(wave: Sequence[Any], pre_bar: Any | None) -> bool:
-    """是否三板组（对齐旧项目 ``analyzer.is_sanbanzu``，readme §2.3 排除项）。
-
-    判定（全部满足）：恰好 3 连板；后两板均一字；首板量 ≤ 波前一日量 ×1.2
-    （波前一日缺失时放行该条——无法证伪，避免窗口开头的样本被整段误杀）；
-    两个一字板量均 ≤ 首板量 ×0.1（极度缩量）。
-    """
-    if len(wave) != 3:
-        return False
-    first, second, third = wave
-    if not (_is_one_word(second) and _is_one_word(third)):
-        return False
-    if pre_bar is not None:
-        if not float(first.volume_shares) <= float(pre_bar.volume_shares) * _SANBANZU_FIRST_VS_PRE:
-            return False
-    return float(second.volume_shares) <= float(first.volume_shares) * _SANBANZU_ONE_WORD_VS_FIRST and (
-        float(third.volume_shares) <= float(first.volume_shares) * _SANBANZU_ONE_WORD_VS_FIRST
-    )
-
-
-def _has_suspect_day(bars: Sequence[Any]) -> bool:
-    """是否存在 suspect 日（对齐旧项目 ``analyzer``：|递推涨跌幅| > 10.5%）。
-
-    昨收取行上的 ``pre_close``（调用方应先经 :func:`_with_pre_close` 回填）；
-    越界只可能是除权除息 / 送转 / 坏数据，整票拒收（readme §2.5）。
-    昨收缺失时**跳过该日**（无法判定，不误杀）。
-    """
-    for bar in bars:
-        pre = _to_float(getattr(bar, "pre_close", None))
-        close = _to_float(getattr(bar, "close", None))
-        if pre is None or close is None or pre <= 0:
-            continue
-        if abs(close / pre - 1) > _SUSPECT_PCT:
-            return True
-    return False
-
-
-def _day_metrics(bar: Any) -> DayMetrics:
-    """由日线构造全天字段对象（昨收缺失则涨跌幅类字段留空）。"""
-    base = _to_float(getattr(bar, "pre_close", None))
-    pre_close = base if base is not None and base > 0 else None
-    open_px = _to_float(getattr(bar, "open", None)) or 0.0
-    high_px = _to_float(getattr(bar, "high", None)) or 0.0
-    low_px = _to_float(getattr(bar, "low", None)) or 0.0
-    close_px = _to_float(getattr(bar, "close", None)) or 0.0
-    return DayMetrics(
-        open=open_px,
-        high=high_px,
-        low=low_px,
-        close=close_px,
-        open_pct=_pct(open_px, pre_close) if pre_close is not None else None,
-        high_pct=_pct(high_px, pre_close) if pre_close is not None else None,
-        low_pct=_pct(low_px, pre_close) if pre_close is not None else None,
-        close_pct=_pct(close_px, pre_close) if pre_close is not None else None,
-        amp_pct=(high_px - low_px) / pre_close if pre_close is not None else None,
-        volume=_to_float(getattr(bar, "volume_shares", None)) or 0.0,
-    )
-
-
-def _pct(price: float, pre_close: float) -> float | None:
-    """相对昨收的涨幅（小数口径）。"""
-    if pre_close <= 0:
-        return None
-    return price / pre_close - 1
-
-
-def _minute_metrics(prices: Sequence[float], pre_close: float | None) -> MinuteMetrics:
-    """由分钟价序列计算派生指标。"""
-    if not prices or not pre_close or pre_close <= 0:
-        return MinuteMetrics(n=len(prices))
-    low = min(prices)
-    high = max(prices)
-    close = prices[-1]
-    span = high - low
-    return MinuteMetrics(
-        n=len(prices),
-        high_pct=high / pre_close - 1,
-        low_pct=low / pre_close - 1,
-        close_pct=close / pre_close - 1,
-        amp_pct=span / pre_close,
-        low_time_i=prices.index(low),
-        close_pos=(close - low) / span if span > 0 else 0.5,
-    )
-
-
-def _mean(values: Sequence[float]) -> float | None:
-    """算术平均；空序列返回 ``None``。"""
-    return sum(values) / len(values) if values else None
-
-
-def _ratio(numerator: float | None, denominator: float | None) -> float | None:
-    """安全比值；分母为 0/缺失时返回 ``None``。"""
-    if numerator is None or not denominator:
-        return None
-    return numerator / denominator
 
 
 def _sample_from_bars(
@@ -543,8 +82,8 @@ def _sample_from_bars(
     """由日线序列与分时映射构造一条样本；分时缺失时返回 ``None``。
 
     ``t_metrics`` / ``t1_metrics`` / ``t_date`` / ``t1_date`` 为**开盘注入**路径
-    （:func:`build_opening_samples`）：D+1 / D+2 日线尚未入库时，以 09:25 撮合价
-    合成 ``DayMetrics(open=open_pct 相对昨收)``，其余字段留空。
+    （:func:`app.engine.dragon_opening.build_opening_samples`）：D+1 / D+2 日线尚未
+    入库时，以 09:25 撮合价合成 ``DayMetrics(open=open_pct 相对昨收)``，其余字段留空。
     """
     first_yin = bars[index]
     wave = bars[wave_start:index]
@@ -581,8 +120,10 @@ def _sample_from_bars(
     t_final = t_metrics if t_metrics is not None else _day_metrics(t_bar)
     t1_final = t1_metrics if t1_metrics is not None else _day_metrics(t1_bar)
     # t_vol_vs_d 优先取注入/日线口径的成交量；两者都缺（合成 t 无量）时为 None。
-    t_volume = t_final.volume if t_final.volume is not None else (
-        float(t_bar.volume_shares) if t_bar is not None else None
+    t_volume = (
+        t_final.volume
+        if t_final.volume is not None
+        else (float(t_bar.volume_shares) if t_bar is not None else None)
     )
 
     return DragonSample(
@@ -752,143 +293,6 @@ def _next_trading_date(after: date, trading_dates: set[date] | None) -> date:
     return after + timedelta(days=1)
 
 
-def _wave_start_for(
-    bars: Sequence[Any],
-    index: int,
-    trading_dates: set[date] | None,
-) -> tuple[int, Any | None] | None:
-    """定位 ``bars[index]``（首阴）紧邻连板波的起点与波前一日。
-
-    返回 ``(wave_start, pre_wave_bar)``；首阴与波末板不相邻（隔缺失交易日）
-    或不构成连板时返回 ``None``。判定口径与 :func:`_scan_code` 一致。
-    """
-    limit_flags = [_is_limit_up(bar) for bar in bars]
-    consecutive = [False] * len(bars)
-    for i in range(1, len(bars)):
-        consecutive[i] = _dates_adjacent(bars[i - 1].trade_date, bars[i].trade_date, trading_dates)
-    if index < 1 or not consecutive[index]:
-        return None
-    if not float(bars[index].close) < float(bars[index].open):
-        return None
-    wave_start = index - 1
-    while wave_start >= 0 and limit_flags[wave_start] and (
-        wave_start == index - 1 or consecutive[wave_start + 1]
-    ):
-        wave_start -= 1
-    wave_start += 1
-    pre_wave_bar = (
-        bars[wave_start - 1] if wave_start > 0 and consecutive[wave_start] else None
-    )
-    return wave_start, pre_wave_bar
-
-
-async def build_opening_samples(
-    repos: Any,
-    today: date,
-    opening_prices: Mapping[str, float],
-) -> list[DragonSample]:
-    """构造 **09:25 开盘注入版**样本（策略 ``Phase.OPENING`` 盘中判定用）。
-
-    与 :func:`build_samples` 的差异：D+1 / D+2 日线尚未入库，当日开盘价由
-    ``opening_prices``（09:25 撮合，``{code: price}``）合成注入：
-
-    - **S2 视角**：``D = 上一交易日``（日线/分时已齐），``t.open`` = 今日撮合价、
-      ``t.open_pct`` = 撮合价 / D 收盘 - 1；
-    - **S4 视角**：``D = 上上交易日``（``t`` = 上一交易日全天日线已齐），
-      ``t1.open`` / ``t1.open_pct`` = 今日撮合价注入。
-
-    ``T1``（S2 的可卖日）取日历中今日之后的下一交易日；日历未覆盖时以今日占位
-    （仅影响展示，卖出撮合由盘后 INTRADAY 阶段以真实日线完成）。
-
-    Returns:
-        按 ``(D, code)`` 升序的样本列表；日历缺失或历史不足两个交易日时返回空。
-    """
-    trading_dates = await _load_trading_dates(
-        repos, today - timedelta(days=45), today + timedelta(days=15), anchor=today
-    )
-    if not trading_dates:
-        return []
-    past = sorted(day for day in trading_dates if day < today)
-    future = sorted(day for day in trading_dates if day > today)
-    if len(past) < 2:
-        return []
-    y1, y2 = past[-1], past[-2]
-    t1_for_s2 = future[0] if future else today
-
-    out: list[DragonSample] = []
-    for stock in await repos.stocks.list_all(board="主板"):
-        if bool(getattr(stock, "is_st", False)):
-            continue
-        code = str(stock.code)
-        if not _is_main_board_code(code):
-            continue
-        om_price = opening_prices.get(code)
-        if om_price is None or om_price <= 0:
-            continue
-        bars = await repos.daily_bars.get_range(code, y2 - timedelta(days=45), y1)
-        if not bars or _has_suspect_day(bars):
-            continue
-        minute_by_date = await _load_minutes(repos, code, bars)
-        today_rows = await repos.minute_bars.get_day(code, today)
-        if today_rows:
-            minute_by_date[today] = tuple(
-                float(row.price) for row in sorted(today_rows, key=lambda row: int(row.minute_index))
-            )
-
-        def _build(d_date: date, *, for_s4: bool) -> DragonSample | None:
-            index = next(
-                (i for i, bar in enumerate(bars) if bar.trade_date == d_date), None
-            )
-            if index is None:
-                return None
-            located = _wave_start_for(bars, index, trading_dates)
-            if located is None:
-                return None
-            wave_start, pre_wave_bar = located
-            wave = bars[wave_start:index]
-            if len(wave) < 2:
-                return None
-            d_close = float(bars[index].close)
-            open_pct = om_price / d_close - 1 if d_close > 0 else None
-            if for_s4:
-                # t = D+1（上一交易日）真实日线；t1 = 今日（撮合价合成）。
-                return _sample_from_bars(
-                    code,
-                    str(stock.name),
-                    bars,
-                    minute_by_date,
-                    index,
-                    wave_start,
-                    pre_wave_bar,
-                    t1_metrics=DayMetrics(open=om_price, open_pct=open_pct),
-                    t1_date=today,
-                )
-            # S2：t = 今日（撮合价合成）；t1 = 下一交易日（占位）。
-            return _sample_from_bars(
-                code,
-                str(stock.name),
-                bars,
-                minute_by_date,
-                index,
-                wave_start,
-                pre_wave_bar,
-                t_metrics=DayMetrics(open=om_price, open_pct=open_pct),
-                t1_metrics=DayMetrics(),
-                t_date=today,
-                t1_date=t1_for_s2,
-            )
-
-        s2 = _build(y1, for_s4=False)
-        if s2 is not None and not s2.is_sanbanzu:
-            out.append(s2)
-        s4 = _build(y2, for_s4=True)
-        if s4 is not None and not s4.is_sanbanzu:
-            out.append(s4)
-
-    out.sort(key=lambda sample: (sample.D, sample.code))
-    return out
-
-
 def _dates_adjacent(prev_d: date, cur_d: date, trading_dates: set[date] | None) -> bool:
     """两根日线是否为**相邻交易日**（中间无缺失的开市日）。
 
@@ -925,9 +329,7 @@ def _scan_code(
     # consecutive[i]：bars[i-1] 与 bars[i] 是否为相邻交易日（无缺失开市日）。
     consecutive = [False] * len(bars)
     for i in range(1, len(bars)):
-        consecutive[i] = _dates_adjacent(
-            bars[i - 1].trade_date, bars[i].trade_date, trading_dates
-        )
+        consecutive[i] = _dates_adjacent(bars[i - 1].trade_date, bars[i].trade_date, trading_dates)
     out: list[DragonSample] = []
     index = 1
     while index < len(bars):
@@ -948,9 +350,7 @@ def _scan_code(
         if boards >= min_boards and start <= bar.trade_date <= end:
             # 波前一日仅当与波首板相邻时才参与三板组判定（否则视为缺失）。
             pre_wave_bar = (
-                bars[wave_start - 1]
-                if wave_start > 0 and consecutive[wave_start]
-                else None
+                bars[wave_start - 1] if wave_start > 0 and consecutive[wave_start] else None
             )
             t_metrics = t1_metrics = None
             t_date = t1_date = None
@@ -962,9 +362,7 @@ def _scan_code(
                     t_date = _next_trading_date(bar.trade_date, trading_dates)
                     t_metrics = DayMetrics()
                 if t1_bar is None:
-                    t1_date = _next_trading_date(
-                        t_date or bar.trade_date, trading_dates
-                    )
+                    t1_date = _next_trading_date(t_date or bar.trade_date, trading_dates)
                     t1_metrics = DayMetrics()
             sample = _sample_from_bars(
                 code,
@@ -983,8 +381,3 @@ def _scan_code(
                 out.append(sample)
         index += 1
     return out
-
-
-def _is_main_board_code(code: str) -> bool:
-    """是否 60/00 主板（排除创业板 30 / 科创板 68 / 北交所 8、4）。"""
-    return code.startswith(("60", "00"))

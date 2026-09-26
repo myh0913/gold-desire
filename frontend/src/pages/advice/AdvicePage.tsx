@@ -96,9 +96,12 @@ function asPayload(raw: Record<string, unknown>): DragonAdvicePayload {
   return raw as unknown as DragonAdvicePayload;
 }
 
-function pathBadgeVariant(pathId: string): 'default' | 'secondary' | 'outline' {
-  if (pathId === 'S2') return 'default';
-  if (pathId === 'S4') return 'secondary';
+function pathBadgeVariant(
+  pathId: string,
+): 'default' | 'secondary' | 'up' | 'outline' {
+  if (pathId === 'S2' || pathId === 'dip') return 'default';
+  if (pathId === 'S4' || pathId === 'A') return 'secondary';
+  if (pathId === 'auction') return 'up';
   return 'outline';
 }
 

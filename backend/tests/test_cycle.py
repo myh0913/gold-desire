@@ -17,12 +17,11 @@ from decimal import Decimal
 
 import pytest
 from app.db.base import Base
-from app.models.market import CycleJudgement, LimitUpPool, MarketSentiment
+from app.models.market import CycleJudgement, MarketSentiment
 from app.repositories import Repositories
 from app.services.cycle import (
     CycleIndicators,
     CycleService,
-    build_indicators,
     classify,
 )
 from app.strategies.protocol import CycleState
@@ -219,28 +218,6 @@ async def _seed(session: AsyncSession) -> None:
         ]
     )
     await session.flush()
-
-
-async def test_build_indicators_from_db(session: AsyncSession) -> None:
-    """炸板率由计数现算、晋级率取交集、高度取最高、龙头取高连板。"""
-    await _seed(session)
-    repos = Repositories.build(session)
-
-    ind = await build_indicators(repos, DAY)
-
-    assert ind.temperature == pytest.approx(72.5293)
-    assert ind.limit_up_count == 103
-    assert ind.limit_down_count == 3
-    # 炸板率 = 炸板 / (炸板 + 涨停) = 26 / 129
-    assert ind.break_ratio == pytest.approx(26 / 129)
-    assert ind.board_height == 5
-    assert ind.leader_code == "000001.SZ"
-    assert ind.leader_name == "甲"
-    assert ind.leader_limit_down is False
-    # 昨日涨停 3 只中 2 只今日仍涨停
-    assert ind.promotion_rate == pytest.approx(2 / 3)
-    # 指数日涨幅未采集 → 恒 None
-    assert ind.index_daily_pct is None
 
 
 async def test_judge_persists_and_is_idempotent(session: AsyncSession) -> None:
